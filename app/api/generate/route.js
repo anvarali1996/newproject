@@ -3,7 +3,8 @@ import { auth, jsonError } from '../../../lib/auth.js';
 import { db, upsertUser } from '../../../lib/db.js';
 import { verifySource, verifiedVideoSeconds } from '../../../lib/r2.js';
 import { createVideo } from '../../../lib/runway.js';
-import { priceFor } from '../../../lib/pricing.js';
+import { billedPrice } from '../../../lib/pricing-db.js';
+import { buildPrompt } from '../../../lib/prompt-presets.js';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
@@ -11,7 +12,8 @@ export async function POST(req) {
   let jobId=null, charged=false, user=null, cost=0;
   try {
     user=auth(req);
-    const {mode,key,videoKey,prompt,seconds:requestedSeconds}=await req.json();
+    const {mode,key,videoKey,presetId,extraPrompt,seconds:requestedSeconds}=await req.json();
+    const prompt=mode==='act'?'':buildPrompt(mode,presetId,extraPrompt||'');
     if(!['image','video','act'].includes(mode))throw Error('Unsupported mode');
     if(mode!=='act' && (typeof prompt!=='string'||prompt.trim().length<4||prompt.length>1000))throw Error('Invalid prompt');
     if(mode==='act' && !videoKey)throw Error('Portrait and motion video are required');
@@ -27,7 +29,7 @@ export async function POST(req) {
       seconds=await verifiedVideoSeconds(videoKey,user.id);
       performanceUri=await verifySource(videoKey,user.id,'video');
     }
-    cost=priceFor(mode,seconds);
+    cost=await billedPrice(mode,seconds);
     const sql=db();
     await upsertUser(user);
     const debit=await sql`UPDATE users SET credits=credits-${cost}

@@ -1,0 +1,20 @@
+{
+  "appName": "VisionAI",
+  "tagline": "Your imagination. In motion.",
+  "modes": {
+    "image": {"title": "Photo to Video", "firstUpload": "Choose a photo", "helper": "Choose a preset — we'll write the prompt for you.", "cta": "Generate video"},
+    "act": {"title": "Me in Video", "firstUpload": "Upload your portrait", "secondUpload": "Upload a movement video", "helper": "No prompt needed. The portrait sets the character; the video supplies movement and expressions. This is not guaranteed to be an exact face swap.", "cta": "Animate my portrait"},
+    "video": {"title": "Video Remix", "firstUpload": "Choose a video", "helper": "Choose the style and we'll prepare the editing prompt.", "cta": "Remix video"}
+  },
+  "presets": "Choose a style",
+  "advanced": "Optional: add your own instruction",
+  "promptPreview": "See generated prompt",
+  "consent": "I own this media or have permission from everyone depicted.",
+  "cost": "Price before generation",
+  "inviteTitle": "Invite friends. Earn credits.",
+  "inviteDescription": "Get 2 credits when a new friend opens VisionAI using your link for the first time.",
+  "inviteButton": "Share invite link",
+  "inviteCap": "Maximum 10 rewarded invites per day, 100 total. Credits are not cash.",
+  "creditsShop": "Buy more credits with Telegram Stars",
+  "errorUnauthorized": "Open this Mini App in Telegram to continue"
+}
