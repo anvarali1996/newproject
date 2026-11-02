@@ -7,7 +7,7 @@ export async function POST(req) {
     const user=auth(req);
     const {type,size,mode}=await req.json();
     const config=rule(type);
-    if(!config||config.mode!==mode || !Number.isSafeInteger(size) || size<=0 || size>config.max)
+    if(!config||(mode==='act' ? !['image','video'].includes(config.mode) : config.mode!==mode) || !Number.isSafeInteger(size) || size<=0 || size>config.max)
       throw new Error('Unsupported media type or file size');
     const key=`uploads/${user.id}/${randomUUID()}.${config.ext}`;
     return Response.json({key,uploadUrl:await signedUpload(key,type)});
