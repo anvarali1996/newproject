@@ -93,7 +93,7 @@ export default function Home(){
       const key=await upload(mode==='act'?photo:mainFile);
       const videoKey=mode==='act'?await upload(mainFile):null;
       setStep('Creating AI task');
-      const created=await api('/api/generate','POST',{mode,key,videoKey,presetId:preset,extraPrompt,seconds});
+      const created=await api('/api/generate','POST',{mode,key,videoKey,presetId: safePreset,extraPrompt,seconds});
       setJobId(created.id);setUser(old=>old?{...old,credits:created.remaining}:old);
       setTab('create');setStep('Video is generating');
     }catch(ex){setError(ex.message);setStep('');}
@@ -108,13 +108,30 @@ export default function Home(){
     }catch(e){setError(e.message);}
     finally{setPayBusy('');}
   }
-  const previewPrompt = mode==='act'?'':buildPrompt(mode,preset,extraPrompt);
-  function shareInvite(){
-    if(!referral?.url)return setShareState('Set TELEGRAM_BOT_USERNAME in Vercel first.');
-    const share=`https://t.me/share/url?url=${encodeURIComponent(referral.url)}&text=${encodeURIComponent('Create AI videos with VisionAI ✨')}`;
-    if(window.Telegram?.WebApp?.openTelegramLink)window.Telegram.WebApp.openTelegramLink(share);
-    else window.open(share,'_blank','noopener,noreferrer');
+  
+const modePresets = PRESETS[mode] || [];
+
+const safePreset = modePresets.some(
+  p => p.id === preset
+)
+  ? preset
+  : modePresets[0]?.id;
+
+let previewPrompt = '';
+
+try {
+  if (mode !== 'act' && safePreset) {
+    previewPrompt = buildPrompt(
+      mode,
+      safePreset,
+      extraPrompt
+    );
   }
+} catch (err) {
+  console.error('Prompt error:', err);
+  previewPrompt = '';
+}
+
   async function copyInvite(){
     if(!referral?.url)return;
     try {await navigator.clipboard.writeText(referral.url);setShareState('Copied invite link!');}
@@ -142,7 +159,7 @@ export default function Home(){
         {mode==='image'?<><div className="sectionLabel"><span>03</span> Duration</div><div className="duration"><button type="button" className={seconds===5?'active':''} onClick={()=>setSeconds(5)}>5 seconds</button><button type="button" className={seconds===10?'active':''} onClick={()=>setSeconds(10)}>10 seconds</button></div></>:<div className="durationInfo">{videoSeconds?`Video duration: ${videoSeconds.toFixed(1)}s · billed as ${Math.ceil(videoSeconds)}s`:'Video duration will be checked automatically'}</div>}
         {mode!=='act'?<>
           <div className="sectionLabel"><span>{mode==='image'?'04':'03'}</span> Choose your style — no prompt needed</div>
-          <div className="presetGrid">{PRESETS[mode].map(p=><button key={p.id} type="button" className={`presetCard ${preset===p.id?'selected':''}`} onClick={()=>setPreset(p.id)}><span>{p.icon}</span><strong>{p.name}</strong><small>{p.description}</small></button>)}</div>
+          <div className="presetGrid">{modePresets.map(p =><button key={p.id} type="button" className={`presetCard ${preset===p.id?'selected':''}`} onClick={()=>setPreset(p.id)}><span>{p.icon}</span><strong>{p.name}</strong><small>{p.description}</small></button>)}</div>
           <details className="advanced"><summary>✎ Optional: add an instruction</summary><textarea className="prompt" value={extraPrompt} onChange={e=>setExtraPrompt(e.target.value)} maxLength={300} placeholder="For example: gentle wind, keep colors natural…"/><small>Up to 300 characters. Optional.</small></details>
           <details className="preview"><summary>See AI-generated prompt</summary><p>{previewPrompt}</p></details>
         </>:<div className="notice"><strong>No prompt required for Me in Video.</strong><br/>Upload a clear portrait and an MP4 movement video with one visible person. Act-Two transfers gestures and expressions; it does not guarantee exact face replacement or preservation of the original background.</div>}
