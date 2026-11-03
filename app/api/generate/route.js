@@ -21,20 +21,35 @@ export async function POST(req) {
     if (mode === 'image') {
       seconds = Number(requestedSeconds);
       sourceUrl = await verifySource(key, user.id, 'image');
+
     } else if (mode === 'video') {
-      seconds = await verifiedVideoSeconds(key, user.id);
-      sourceUrl = await verifySource(key, user.id, 'video');
+
+      // Video Remix / Change style: 2–10 soniya
+      seconds = await verifiedVideoSeconds(
+        key,
+        user.id,
+        { minSeconds: 2, maxSeconds: 10 }
+      );
+
+      sourceUrl = await verifySource(
+        key,
+        user.id,
+        'video'
+      );
 
     } else {
-      sourceUrl = await verifySource(key, user.id, 'image');
+
+      // Me in Video / One person: 3–30 soniya
+      sourceUrl = await verifySource(
+        key,
+        user.id,
+        'image'
+      );
 
       seconds = await verifiedVideoSeconds(
         videoKey,
         user.id,
-        {
-          minSeconds: 3,
-          maxSeconds: 30
-        }
+        { minSeconds: 3, maxSeconds: 30 }
       );
 
       performanceUri = await verifySource(
@@ -43,6 +58,7 @@ export async function POST(req) {
         'video'
       );
     }
+
 
     cost = await billedPrice(mode, seconds);
     const sql = db();
