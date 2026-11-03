@@ -5,7 +5,7 @@ import {PRESETS,buildPrompt} from '../lib/prompt-presets.js';
 
 const MODES=[
   {id:'image',icon:'✦',title:'Photo to Video',subtitle:'Bring a photo to life',detail:'5 or 10 sec',rate:'1 credit/sec'},
-  {id:'act',icon:'◈',title:'Me in Video',subtitle:'Animate your portrait with a performance video',detail:'3–10 sec',rate:'2 credits/sec'},
+  {id:'act',icon:'◈',title:'Me in Video',subtitle:'Animate your portrait with a performance video',detail:'3–30 sec',rate:'2 credits/sec'},
   {id:'video',icon:'▣',title:'Video Remix',subtitle:'Replace multiple people or restyle a clip',detail:'2–10 sec',rate:'Choose an option'}
 ];
 function UploadField({title,sub,file,onChange,accept}){
@@ -135,7 +135,25 @@ export default function Home(){
     secondsOf(f).then(s=>{if(active)setVideoSeconds(s);}).catch(e=>{if(active)setError(e.message);});
     return ()=>{active=false;};
   },[mainFile,mode]);
-  const rawSeconds=mode==='image'?seconds:videoSeconds?Math.ceil(videoSeconds):0;
+  const rawSeconds = mode === 'image' ? seconds : videoSeconds ? Math.ceil(videoSeconds) : 0;
+  
+const needsPortrait = mode === 'act' ||
+  (mode === 'video' && videoWorkflow === 'one');
+
+// Agar needsPortrait yuqorida allaqachon
+// mavjud bo'lsa, uni qayta yozma.
+
+const maxVideoSeconds = needsPortrait ? 30 : 10;
+
+const durationError =
+  mode !== 'image' &&
+  mainFile &&
+  videoSeconds > maxVideoSeconds
+    ? `Your video is ${Math.ceil(videoSeconds)} seconds long.
+       Maximum allowed is ${maxVideoSeconds} seconds.
+       Please trim your video and upload again.`
+    : '';
+
   let cost=null;
   try{if(rates)cost=priceFor(mode,rawSeconds,rates);}catch{}
   function resetScan(){try{window.localStorage.removeItem('visionai:lastSwapId');}catch{}setScanId('');setScanStatus('');setDetectedPeople([]);setFaceFiles({});setSwapCost(null);setScanProgress(null);setSwapUrl('');}
@@ -187,7 +205,7 @@ export default function Home(){
     if(!user||!init)return setError('Open inside Telegram and sign in');
     if(!mainFile || (mode==='act'&&!photo))return setError('Select the required media files');
     if(!consent)return setError('Please confirm you have permission to use these files');
-    if(cost===null)return setError('Unsupported duration. Image: 5/10s, video: 2–10s, portrait: 3–10s.');
+    if(cost===null)return setError('Unsupported duration. Image: 5/10s, video: 2–10s, portrait: 3–30s.');
     if(user.credits<cost){setTab('credits');return setError(`You need ${cost} credits — choose a credit pack below.`);}
     setBusy(true);
     try{
@@ -247,7 +265,12 @@ export default function Home(){
       {mode==='video'&&videoWorkflow==='people'?<div className="peopleWorkflow">
         <div className="sectionLabel"><span>02</span> Upload the original video</div>
         <UploadField title="Choose the video with people" sub="MP4 · 2–10 seconds · up to 50 MB" file={mainFile} onChange={updateVideo} accept="video/mp4"/>
-        <div className="durationInfo">{videoSeconds?`Original video: ${videoSeconds.toFixed(1)} seconds`:'We will find the people in your video. No face photos needed yet.'}</div>
+        <div className="durationInfo">{videoSeconds ? `Original video: ${videoSeconds.toFixed(1)} seconds` : 'We will find the people in your video. No face photos needed yet.'}
+        {durationError && (
+  <div className="error" role="alert">
+    ⚠️ {durationError}
+  </div>
+)}</div>
         <label className="consent"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>I have permission from everyone shown and from every person whose photo I upload. I will not use this to impersonate anyone.</span></label>
         {!swapEnabled&&<div className="notice">Multi-person replacement needs an additional face-swap provider. Add LOVELY_API_KEY in Vercel; the existing Runway key cannot perform this workflow.</div>}
         {!scanId&&<button className="cta" type="button" disabled={!mainFile||!consent||scanBusy||!swapEnabled} onClick={analyzePeople}>🔍 Find people in video</button>}
@@ -267,7 +290,7 @@ export default function Home(){
       </div>:<form onSubmit={generate}>
         <div className="sectionLabel"><span>02</span> Add your media</div>
         {mode==='act'&&<><UploadField title="Upload your portrait" sub="Clear front-facing image · JPG, PNG, WebP · up to 10 MB" file={photo} onChange={setPhoto} accept="image/jpeg,image/png,image/webp"/><div className="fieldCaption">Then choose a video whose facial expressions and movements you want to follow.</div></>}
-        <UploadField title={mode==='image'?'Upload a photo':'Upload your video'} sub={mode==='image'?'JPG, PNG or WebP · up to 10 MB':'MP4 · 2–10s for remix, 3–10s for Me in Video · up to 50 MB'} file={mainFile} onChange={updateVideo} accept={mode==='image'?'image/jpeg,image/png,image/webp':'video/mp4'}/>
+        <UploadField title={mode==='image'?'Upload a photo':'Upload your video'} sub={mode==='image'?'JPG, PNG or WebP · up to 10 MB':'MP4 · 2–10s for remix, 3–30s for Me in Video · up to 50 MB'} file={mainFile} onChange={updateVideo} accept={mode==='image'?'image/jpeg,image/png,image/webp':'video/mp4'}/>
         {mode==='image'?<><div className="sectionLabel"><span>03</span> Duration</div><div className="duration"><button type="button" className={seconds===5?'active':''} onClick={()=>setSeconds(5)}>5 seconds</button><button type="button" className={seconds===10?'active':''} onClick={()=>setSeconds(10)}>10 seconds</button></div></>:<div className="durationInfo">{videoSeconds?`Video duration: ${videoSeconds.toFixed(1)}s · billed as ${Math.ceil(videoSeconds)}s`:'Video duration will be checked automatically'}</div>}
         {mode!=='act'?<>
           <div className="sectionLabel"><span>{mode==='image'?'04':'03'}</span> Choose your style — no prompt needed</div>
