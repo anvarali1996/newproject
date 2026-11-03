@@ -20,3 +20,33 @@
 .inviteActions button{background:#795ae6;padding:13px 8px;font-size:12px;font-weight:750;border:0;border-radius:11px}
 .inviteActions button+button{background:#2b2a47}
 .inviteBox .inviteFine{font-size:11px;color:#a3a4bd;margin-top:17px}
+
+/* v2.2: clear, accessible mode selection + staged multi-person editor */
+.modeCard{position:relative;min-height:177px;transition:background .2s,border-color .2s,transform .2s}
+.modeCard:active{transform:scale(.98)}
+.modeCard.chosen{border:2px solid #bba4ff;background:linear-gradient(145deg,#413165,#262543);box-shadow:0 0 24px #8056df44, inset 0 0 0 1px #8f71e8}
+.selectedTick{font-size:10px;font-weight:800;color:#8f94ae;align-self:flex-end;border-radius:8px}
+.modeCard.chosen .selectedTick{color:#ddccff}
+.workflowTabs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;padding:5px;background:#15192a;border:1px solid #343651;border-radius:14px}
+.workflowTabs button{padding:13px 8px;background:transparent;border:1px solid transparent;border-radius:10px;font-size:12px;font-weight:750}
+.workflowTabs .active{background:#483766;border-color:#af8cff;box-shadow:0 0 13px #9c72d733}
+.faceGrid{display:grid;gap:12px}
+.faceRow{padding:12px;background:#181b30;border:1px solid #504368;border-radius:15px}
+.faceDetail{display:flex;align-items:center;gap:12px;padding-bottom:9px}
+.faceDetail strong{display:block;font-size:14px}
+.faceDetail small{display:block;font-size:11px;color:#a7a8c9;margin-top:5px}
+.facePreview,.facePlaceholder{width:65px;height:65px;object-fit:cover;border-radius:13px;border:1px solid #7259a3;background:#27233e}
+.facePlaceholder{display:grid;place-items:center;font-size:24px}
+.faceRow .uploadBox{min-height:92px;padding:10px}
+.faceRow .uploadIcon{width:28px;height:28px;font-size:17px}
+.progressPanel{border:1px solid #635395;background:radial-gradient(circle at 50% 0%,#392955,#15182c 72%);border-radius:19px;text-align:center;padding:24px 17px;margin-top:18px;display:flex;flex-direction:column;align-items:center;gap:11px}
+.progressPanel strong{font-size:15px}
+.progressPanel small{font-size:11px;color:#bec1d9;line-height:1.5}
+.progressOrbit{width:74px;height:74px;border:3px solid #7761a4;border-top-color:#e0afff;border-right-color:#bf91fa;border-radius:50%;display:grid;place-items:center;position:relative;animation:visionSpin 2.2s linear infinite;box-shadow:0 0 21px #8952ee33}
+.progressOrbit>span{font-size:31px;color:#eacbff;animation:visionReverse 2.2s linear infinite}
+.progressOrbit i{position:absolute;width:7px;height:7px;background:#ffe0ff;border-radius:50%;top:5px;right:3px;box-shadow:0 0 13px #dcaaff}
+.progressTrack{height:7px;width:100%;background:#242943;border-radius:50px;overflow:hidden}
+.progressFill{height:100%;border-radius:50px;background:linear-gradient(90deg,#9270ff,#df8dff);transition:width .5s}
+.progressIndeterminate{height:100%;width:40%;background:linear-gradient(90deg,transparent,#ac7dff,#eaa0d5,transparent);animation:visionSlide 1.6s ease-in-out infinite}
+@keyframes visionSpin{to{transform:rotate(360deg)}}@keyframes visionReverse{to{transform:rotate(-360deg)}}@keyframes visionSlide{from{transform:translateX(-120%)}to{transform:translateX(350%)}}
+@media(prefers-reduced-motion:reduce){.progressOrbit,.progressOrbit>span,.progressIndeterminate{animation:none}}
