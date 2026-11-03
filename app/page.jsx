@@ -132,6 +132,33 @@ try {
   previewPrompt = '';
 }
 
+function shareInvite() {
+  if (!referral?.url) {
+    setShareState('Referral link not available yet.');
+    return;
+  }
+
+  const shareUrl =
+    'https://t.me/share/url?url=' +
+    encodeURIComponent(referral.url) +
+    '&text=' +
+    encodeURIComponent(
+      'Create amazing AI videos with VisionAI! 🎬'
+    );
+
+  const tg = window.Telegram?.WebApp;
+
+  if (tg?.openTelegramLink) {
+    tg.openTelegramLink(shareUrl);
+  } else {
+    window.open(
+      shareUrl,
+      '_blank',
+      'noopener,noreferrer'
+    );
+  }
+}
+
   async function copyInvite(){
     if(!referral?.url)return;
     try {await navigator.clipboard.writeText(referral.url);setShareState('Copied invite link!');}
