@@ -20,7 +20,12 @@ export async function GET(req, context) {
     if (!job.runway_id) return Response.json({ status: 'STARTING' });
     // const task = await runway(`/tasks/${encodeURIComponent(job.runway_id)}`);
     const provider = job.provider || 'runway';
-
+    if (!videoUrl) {
+      return Response.json({
+        status: 'RUNNING',
+        message: 'Waiting for output'
+      });
+    }
     const task = provider === 'viggle'
       ? await getViggleVideo(job.runway_id)
       : await runway(
