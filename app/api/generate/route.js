@@ -96,7 +96,7 @@ import { auth, jsonError } from '../../../lib/auth.js';
 import { db, upsertUser } from '../../../lib/db.js';
 import { verifySource, verifiedVideoSeconds } from '../../../lib/r2.js';
 import { createVideo } from '../../../lib/runway.js';
-import { createViggleVideo } from '../../../lib/viggle.js';
+// import { createViggleVideo } from '../../../lib/viggle.js';
 import { createViggleVideo } from '../../../lib/viggle.js';
 import { billedPrice } from '../../../lib/pricing-db.js';
 import { buildPrompt } from '../../../lib/prompt-presets.js';
