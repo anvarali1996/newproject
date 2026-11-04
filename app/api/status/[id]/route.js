@@ -42,10 +42,10 @@ export async function GET(req, context) {
         provider === 'viggle'
           ? task.video_url
           : task.output?.[0];
-      if (!source) return Response.json({ status: 'RUNNING', message: 'Waiting for output' });
+      if (!videoUrl) return Response.json({ status: 'RUNNING', message: 'Waiting for output' });
       const key = `results/${user.id}/${id}.mp4`;
       try {
-        await saveResult(source, key);
+        await saveResult(videoUrl, key);
         await sql`UPDATE jobs SET status='SUCCEEDED',output_key=${key} WHERE id=${id}`;
         return Response.json({ status: 'SUCCEEDED', url: await signedDownload(key, 3600) });
       } catch (error) {
