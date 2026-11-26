@@ -2,12 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { auth,jsonError } from '../../../../lib/auth.js';
 import { db,upsertUser } from '../../../../lib/db.js';
 import { PACKS } from '../../../../lib/pricing.js';
+import { HttpError,badRequest,readJson } from '../../../../lib/errors.js';
 export const runtime='nodejs';
 export async function POST(req){
   try {
     const user=auth(req);
-    const {packId}=await req.json();
-    if(typeof packId!=='string'||!Object.hasOwn(PACKS,packId))throw Error('Unknown credit pack');
+    const {packId}=await readJson(req);
+    if(typeof packId!=='string'||!Object.hasOwn(PACKS,packId))throw badRequest('Unknown credit pack');
     const pack=PACKS[packId];
     await upsertUser(user);
     const sql=db(),id=randomUUID();
@@ -22,7 +23,7 @@ export async function POST(req){
       signal:AbortSignal.timeout(15000)
     });
     const answer=await reply.json();
-    if(!answer.ok||typeof answer.result!=='string')throw Error('Telegram invoice link could not be created');
+    if(!answer.ok||typeof answer.result!=='string')throw new HttpError(502,'Telegram invoice link could not be created');
     return Response.json({invoiceUrl:answer.result});
   }catch(e){return jsonError(e);}
 }

@@ -3,6 +3,7 @@ import {db} from '../../../../../lib/db.js';
 import {getReplacement,cleanCast,SWAP_RATE} from '../../../../../lib/lovely.js';
 import {signedDownload,saveResult} from '../../../../../lib/r2.js';
 import {notifySwapOnce} from '../../../../../lib/telegram-delivery.js';
+import {badRequest,isTransient} from '../../../../../lib/errors.js';
 export const runtime='nodejs';
 export const maxDuration=120;
 
@@ -21,14 +22,21 @@ async function publicStatus(sql,project){
 export async function GET(req,{params}){
   try{
     const user=auth(req);const {id}=await params;
-    if(!/^[0-9a-f-]{36}$/i.test(id))throw Error('Invalid analysis ID');
+    if(!/^[0-9a-f-]{36}$/i.test(id))throw badRequest('Invalid analysis ID');
     const sql=db();
     const rows=await sql`SELECT * FROM swap_projects WHERE id=${id} AND user_id=${user.id}`;
     if(!rows.length)return Response.json({error:'Not found'},{status:404});
     let project=rows[0];
     const cached=await publicStatus(sql,project);if(cached)return cached;
     if(!project.provider_id)return Response.json({status:'ANALYZING',progress:0});
-    const result=await getReplacement(project.provider_id);
+    let result;
+    try{result=await getReplacement(project.provider_id);}
+    catch(error){
+      // Provider busy or unreachable: keep the project as-is and let the client poll again.
+      if(!isTransient(error))throw error;
+      console.warn('[Swap] Temporary status error:',error.cause??error.message);
+      return Response.json({status:project.status,progress:project.progress??null,message:'The video service is busy. Checking again…'});
+    }
     const status=String(result.status||'').toLowerCase();
     if(status==='ready'&&project.status==='ANALYZING'){
       const cast=cleanCast(result.cast);

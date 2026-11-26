@@ -3,6 +3,7 @@ import { db } from '../../../../lib/db.js';
 import { runway } from '../../../../lib/runway.js';
 import { getViggleVideo } from '../../../../lib/viggle.js';
 import { saveResult, signedDownload } from '../../../../lib/r2.js';
+import { badRequest, isTransient } from '../../../../lib/errors.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -14,7 +15,7 @@ export async function GET(req, context) {
     const { id } = await context.params;
 
     if (!/^[0-9a-f-]{36}$/i.test(id)) {
-      throw new Error('Invalid job ID');
+      throw badRequest('Invalid job ID');
     }
 
     const sql = db();
@@ -79,25 +80,13 @@ export async function GET(req, context) {
         );
       }
     } catch (error) {
-      // Viggle vaqtinchalik 5xx yoki 429 qaytarsa,
-      // eski render ishini saqlaymiz.
-      const temporaryViggleError =
-        provider === 'viggle' &&
-        /^Viggle (?:429|5\d{2}):/.test(
-          String(error.message || '')
-        );
-
-      if (temporaryViggleError) {
-        console.warn(
-          '[Viggle] Temporary status error:',
-          error.message
-        );
-
+      // Provayder vaqtinchalik 429/5xx yoki timeout qaytarsa,
+      // ish davom etadi — keyingi so'rovda yana tekshiramiz.
+      if (isTransient(error)) {
+        console.warn(`[${provider}] Temporary status error:`, error.cause ?? error.message);
         return Response.json({
           status: 'RUNNING',
-          message:
-            'Viggle is temporarily unavailable. ' +
-            'Checking your existing video again...'
+          message: 'The AI service is busy. Checking your video again...'
         });
       }
 
