@@ -4,7 +4,7 @@ import {db,upsertUser} from '../../../../lib/db.js';
 import {verifiedVideoSeconds,verifySource} from '../../../../lib/r2.js';
 import {analyzeVideo,SWAP_RATE} from '../../../../lib/lovely.js';
 import {HttpError,badRequest,readJson} from '../../../../lib/errors.js';
-import {limitSwapAnalysis} from '../../../../lib/rate-limit.js';
+import {enforceRateLimit} from '../../../../lib/rate-limit.js';
 export const runtime='nodejs';
 export const maxDuration=45;
 export async function POST(req){
@@ -14,7 +14,7 @@ export async function POST(req){
     const {videoKey,consent}=await readJson(req);
     if(consent!==true)throw badRequest('Permission from everyone depicted is required');
     // Before the full video download and the paid provider call.
-    await limitSwapAnalysis(db(),user.id);
+    await enforceRateLimit(db(),'swap-analyze',user.id);
     const seconds=await verifiedVideoSeconds(videoKey,user.id); // server inspects actual MP4 metadata
     const videoUrl=await verifySource(videoKey,user.id,'video');
     await upsertUser(user);

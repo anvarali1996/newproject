@@ -2,7 +2,7 @@
 
 Bu bitta loyiha: Next.js frontend + API, Neon PostgreSQL, Cloudflare R2, Runway AI.
 **Image → Video** (`gen4_turbo`, 5 s) va **Video → Video** (`aleph2`) rejimlari mavjud.
-Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video almashtirish (LovelyRouter) bor. Bepul video tahlili (swap analyze) har bir foydalanuvchi uchun cheklangan: soatiga 10, kuniga 30 (`SWAP_ANALYSES_PER_HOUR`, `SWAP_ANALYSES_PER_DAY`). Boshqa endpoint'larda rate limit hali yo'q.
+Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video almashtirish (LovelyRouter) bor. Har bir foydalanuvchi uchun rate limit bor (soatiga / kuniga): video tahlili 10 / 30, generatsiya 20 / 100, upload 60 / 300. `.env.example` dagi `*_PER_HOUR` / `*_PER_DAY` bilan o'zgartiriladi.
 
 ## 1. Hisoblar
 1. @BotFather bot yarating va tokenni oling, Telegram'da Mini App uchun /newapp.

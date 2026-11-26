@@ -2,7 +2,7 @@ import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createDb } from './support/pg.js';
-import { takeHit, limitSwapAnalysis } from '../lib/rate-limit.js';
+import { takeHit, enforceRateLimit, limitsFor, POLICIES } from '../lib/rate-limit.js';
 import { jsonError } from '../lib/errors.js';
 
 let sql;
@@ -37,35 +37,54 @@ test('limits are per key', async () => {
   assert.equal((await takeHit(sql, b, opts)).ok, true);
 });
 
-test('limitSwapAnalysis enforces the hourly burst, then the daily cap, with a 429', async t => {
+test('enforceRateLimit applies the hourly burst, then the daily cap, with a 429', async t => {
   process.env.SWAP_ANALYSES_PER_HOUR = '2';
   process.env.SWAP_ANALYSES_PER_DAY = '3';
   t.after(() => { delete process.env.SWAP_ANALYSES_PER_HOUR; delete process.env.SWAP_ANALYSES_PER_DAY; });
   const user = `u${randomUUID().slice(0, 8)}`;
-  await limitSwapAnalysis(sql, user);
-  await limitSwapAnalysis(sql, user);
-  const hourly = await limitSwapAnalysis(sql, user).catch(e => e);
+  const limit = () => enforceRateLimit(sql, 'swap-analyze', user);
+  await limit();
+  await limit();
+  const hourly = await limit().catch(e => e);
   assert.equal(hourly.status, 429);
-  assert.match(hourly.message, /2 videos per hour\. Try again in 60 minutes/);
+  assert.match(hourly.message, /limit of 2 video scans per hour\. Try again in 60 minutes/);
   assert.equal((await sql`SELECT hits FROM rate_limits WHERE key=${`swap-analyze:day:${user}`}`)[0].hits, 2,
     'an hourly rejection does not use up the daily allowance');
 
   await age(`swap-analyze:hour:${user}`, 3601);
-  await limitSwapAnalysis(sql, user); // 3rd of the day
+  await limit(); // 3rd of the day
   await age(`swap-analyze:hour:${user}`, 3601);
-  const daily = await limitSwapAnalysis(sql, user).catch(e => e);
+  const daily = await limit().catch(e => e);
   assert.equal(daily.status, 429);
-  assert.match(daily.message, /3 videos per day\. Try again in 24 hours/);
+  assert.match(daily.message, /limit of 3 video scans per day\. Try again in 24 hours/);
 
   const res = jsonError(daily);
   assert.equal(res.status, 429);
   assert.ok(Number(res.headers.get('retry-after')) > 86000);
 });
 
-test('invalid env limits fall back to defaults', async t => {
-  process.env.SWAP_ANALYSES_PER_HOUR = '0';
-  t.after(() => { delete process.env.SWAP_ANALYSES_PER_HOUR; });
+test('each action has its own counters and limits', async t => {
+  process.env.UPLOADS_PER_HOUR = '1';
+  t.after(() => { delete process.env.UPLOADS_PER_HOUR; });
   const user = `u${randomUUID().slice(0, 8)}`;
-  for (let i = 0; i < 10; i++) await limitSwapAnalysis(sql, user);
-  assert.equal((await limitSwapAnalysis(sql, user).catch(e => e)).status, 429);
+  await enforceRateLimit(sql, 'upload', user);
+  const blocked = await enforceRateLimit(sql, 'upload', user).catch(e => e);
+  assert.equal(blocked.status, 429);
+  assert.match(blocked.message, /1 uploads per hour/);
+  await enforceRateLimit(sql, 'generate', user); // not blocked by the upload limit
+  await enforceRateLimit(sql, 'swap-analyze', user);
+});
+
+test('defaults: a swap fits the upload burst, and invalid env values fall back', async t => {
+  assert.deepEqual(limitsFor('swap-analyze'), { perHour: 10, perDay: 30 });
+  assert.deepEqual(limitsFor('generate'), { perHour: 20, perDay: 100 });
+  assert.deepEqual(limitsFor('upload'), { perHour: 60, perDay: 300 });
+  // A full swap (video + 4 portraits) for every allowed scan must fit the upload limit.
+  assert.ok(limitsFor('upload').perHour >= 5 * limitsFor('swap-analyze').perHour);
+  for (const bad of ['0', '-5', '2.5', 'abc', '1001']) {
+    process.env.GENERATIONS_PER_HOUR = bad;
+    assert.equal(limitsFor('generate').perHour, POLICIES.generate.perHour, bad);
+  }
+  delete process.env.GENERATIONS_PER_HOUR;
+  assert.throws(() => limitsFor('nope'));
 });

@@ -8,6 +8,7 @@ import { billedPrice } from '../../../lib/pricing-db.js';
 import { buildPrompt } from '../../../lib/prompt-presets.js';
 import { badRequest, paymentRequired, readJson } from '../../../lib/errors.js';
 import { debitAndCreateJob, failAndRefundJob } from '../../../lib/billing.js';
+import { enforceRateLimit } from '../../../lib/rate-limit.js';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
@@ -21,6 +22,8 @@ export async function POST(req) {
     const prompt = mode === 'act' ? '' : buildPrompt(mode, presetId, extraPrompt || '');
     if (mode !== 'act' && (typeof prompt !== 'string' || prompt.trim().length < 4 || prompt.length > 1000)) throw badRequest('Invalid prompt');
     if (mode === 'act' && !videoKey) throw badRequest('Portrait and motion video are required');
+    // After cheap validation, before the video download and the provider call.
+    await enforceRateLimit(db(), 'generate', user.id);
     let sourceUrl, performanceUri = null, seconds;
     if (mode === 'image') {
       seconds = Number(requestedSeconds);
