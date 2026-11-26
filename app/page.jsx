@@ -44,6 +44,9 @@ function ProcessingPanel({stage,progress}){
     {progress!=null?<small>{progress}% complete</small>:<small>Checking the AI service for updates…</small>}
   </div>;
 }
+// Remember in-progress work so it resumes if the Mini App is closed mid-generation.
+const JOB_KEY='visionai:lastJobId',SWAP_KEY='visionai:lastSwapId';
+function forget(key){try{window.localStorage.removeItem(key);}catch{}}
 function secondsOf(file){
   return new Promise((resolve,reject)=>{
     const u=URL.createObjectURL(file),v=document.createElement('video');
@@ -78,7 +81,8 @@ export default function Home(){
   const refreshUser=useCallback(async()=>{if(init){const d=await api('/api/me');setUser(d.user);setReferral(d.referral);}},[init,api]);
   useEffect(()=>{
     // Resume a video that was still processing if the Mini App was closed.
-    try{const previous=window.localStorage.getItem('visionai:lastSwapId');if(previous&&/^[0-9a-f-]{36}$/i.test(previous)){setMode('video');setVideoWorkflow('people');setScanId(previous);setScanStatus('ANALYZING');}}catch{}
+    try{const previous=window.localStorage.getItem(SWAP_KEY);if(previous&&/^[0-9a-f-]{36}$/i.test(previous)){setMode('video');setVideoWorkflow('people');setScanId(previous);setScanStatus('ANALYZING');}}catch{}
+    try{const previousJob=window.localStorage.getItem(JOB_KEY);if(previousJob&&/^[0-9a-f-]{36}$/i.test(previousJob))setJobId(previousJob);}catch{}
     const tg=window.Telegram?.WebApp;tg?.ready();tg?.expand();
     const value=tg?.initData||(location.hostname==='localhost'?'dev:local':'');
     setInit(value);
@@ -92,8 +96,12 @@ export default function Home(){
         const j=await api(`/api/status/${jobId}`);
         if(stopRef.current)return;
         setJob(j);
-        if(['SUCCEEDED','FAILED'].includes(j.status)){refreshUser().catch(()=>{});return;}
-      }catch(e){if(!stopRef.current)setError(e.message);}
+        if(['SUCCEEDED','FAILED'].includes(j.status)){forget(JOB_KEY);refreshUser().catch(()=>{});return;}
+      }catch(e){
+        if(stopRef.current)return;
+        setError(e.message);
+        if(/not found/i.test(e.message)){forget(JOB_KEY);return;}
+      }
       timer=setTimeout(poll,5000);
     };
     poll();return ()=>{stopRef.current=true;clearTimeout(timer);};
@@ -114,14 +122,18 @@ export default function Home(){
           return;
         }
         if(x.status==='SUCCEEDED'){
-          setSwapUrl(x.url||'');setTelegramDelivery(x.telegram||'');
+          forget(SWAP_KEY);setSwapUrl(x.url||'');setTelegramDelivery(x.telegram||'');
           refreshUser().catch(()=>{});
           return;
         }
         if(x.status==='FAILED'){
-          setError(x.message||'Video processing failed');refreshUser().catch(()=>{});return;
+          forget(SWAP_KEY);setError(x.message||'Video processing failed');refreshUser().catch(()=>{});return;
         }
-      }catch(err){if(!cancelled)setError(err.message);}
+      }catch(err){
+        if(cancelled)return;
+        setError(err.message);
+        if(/not found/i.test(err.message)){forget(SWAP_KEY);return;}
+      }
       if(!cancelled)timer=setTimeout(poll,5000);
     };
     poll();
@@ -136,27 +148,15 @@ export default function Home(){
     return ()=>{active=false;};
   },[mainFile,mode]);
   const rawSeconds = mode === 'image' ? seconds : videoSeconds ? Math.ceil(videoSeconds) : 0;
-  
-const needsPortrait = mode === 'act' ||
-  (mode === 'video' && videoWorkflow === 'one');
-
-// Agar needsPortrait yuqorida allaqachon
-// mavjud bo'lsa, uni qayta yozma.
-
-const maxVideoSeconds = needsPortrait ? 30 : 10;
-
-const durationError =
-  mode !== 'image' &&
-  mainFile &&
-  videoSeconds > maxVideoSeconds
-    ? `Your video is ${Math.ceil(videoSeconds)} seconds long.
-       Maximum allowed is ${maxVideoSeconds} seconds.
-       Please trim your video and upload again.`
+  // Same limits the server enforces in /api/generate and /api/swap/analyze.
+  const [minVideoSeconds,maxVideoSeconds] = mode === 'act' ? [3,30] : [2,10];
+  const durationError = mode !== 'image' && mainFile && videoSeconds > 0 &&
+    (videoSeconds < minVideoSeconds || videoSeconds > maxVideoSeconds)
+    ? `Your video is ${videoSeconds.toFixed(1)} seconds long. This option accepts ${minVideoSeconds}–${maxVideoSeconds} second videos — please trim it and upload again.`
     : '';
-
   let cost=null;
   try{if(rates)cost=priceFor(mode,rawSeconds,rates);}catch{}
-  function resetScan(){try{window.localStorage.removeItem('visionai:lastSwapId');}catch{}setScanId('');setScanStatus('');setDetectedPeople([]);setFaceFiles({});setSwapCost(null);setScanProgress(null);setSwapUrl('');}
+  function resetScan(){forget(SWAP_KEY);setScanId('');setScanStatus('');setDetectedPeople([]);setFaceFiles({});setSwapCost(null);setScanProgress(null);setSwapUrl('');}
   function selectMode(m){setMode(m);setMainFile(null);setPhoto(null);setVideoSeconds(0);setPreset(PRESETS[m]?.[0]?.id||'natural');setExtraPrompt('');setError('');setConsent(false);resetScan();}
   function updateVideo(file){setMainFile(file);resetScan();setError('');}
   async function upload(file,fileMode=mode){
@@ -175,7 +175,7 @@ const durationError =
       const key=await upload(mainFile,'swap');
       setScanStatus('ANALYZING');
       const result=await api('/api/swap/analyze','POST',{videoKey:key,consent:true});
-      setScanId(result.id);try{window.localStorage.setItem('visionai:lastSwapId',result.id);}catch{}setScanProgress(null);
+      setScanId(result.id);try{window.localStorage.setItem(SWAP_KEY,result.id);}catch{}setScanProgress(null);
     }catch(err){setError(err.message);setScanStatus('');}
     finally{setScanBusy(false);}
   }
@@ -214,7 +214,8 @@ const durationError =
       const videoKey=mode==='act'?await upload(mainFile):null;
       setStep('Creating AI task');
       const created=await api('/api/generate','POST',{mode,key,videoKey,presetId:safePreset,extraPrompt,seconds});
-      setJobId(created.id);setUser(old=>old?{...old,credits:created.remaining}:old);
+      setJobId(created.id);try{window.localStorage.setItem(JOB_KEY,created.id);}catch{}
+      setUser(old=>old?{...old,credits:created.remaining}:old);
       setTab('create');setStep('Video is generating');
     }catch(ex){setError(ex.message);setStep('');}
     finally{setBusy(false);}
@@ -273,7 +274,7 @@ const durationError =
 )}</div>
         <label className="consent"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/><span>I have permission from everyone shown and from every person whose photo I upload. I will not use this to impersonate anyone.</span></label>
         {!swapEnabled&&<div className="notice">Multi-person replacement needs an additional face-swap provider. Add LOVELY_API_KEY in Vercel; the existing Runway key cannot perform this workflow.</div>}
-        {!scanId&&<button className="cta" type="button" disabled={!mainFile||!consent||scanBusy||!swapEnabled} onClick={analyzePeople}>🔍 Find people in video</button>}
+        {!scanId&&<button className="cta" type="button" disabled={!mainFile||!consent||scanBusy||!swapEnabled||!!durationError} onClick={analyzePeople}>🔍 Find people in video</button>}
         {scanId&&detectedPeople.length>0&&<>
           <div className="sectionLabel"><span>03</span> We found {detectedPeople.length} {detectedPeople.length===1?'person':'people'}</div>
           <p className="muted">Upload a separate portrait for each detected person. The photo next to Person 1 replaces Person 1, and so on.</p>
@@ -292,6 +293,7 @@ const durationError =
         {mode==='act'&&<><UploadField title="Upload your portrait" sub="Clear front-facing image · JPG, PNG, WebP · up to 10 MB" file={photo} onChange={setPhoto} accept="image/jpeg,image/png,image/webp"/><div className="fieldCaption">Then choose a video whose facial expressions and movements you want to follow.</div></>}
         <UploadField title={mode==='image'?'Upload a photo':'Upload your video'} sub={mode==='image'?'JPG, PNG or WebP · up to 10 MB':'MP4 · 2–10s for remix, 3–30s for Me in Video · up to 50 MB'} file={mainFile} onChange={updateVideo} accept={mode==='image'?'image/jpeg,image/png,image/webp':'video/mp4'}/>
         {mode==='image'?<><div className="sectionLabel"><span>03</span> Duration</div><div className="duration"><button type="button" className={seconds===5?'active':''} onClick={()=>setSeconds(5)}>5 seconds</button><button type="button" className={seconds===10?'active':''} onClick={()=>setSeconds(10)}>10 seconds</button></div></>:<div className="durationInfo">{videoSeconds?`Video duration: ${videoSeconds.toFixed(1)}s · billed as ${Math.ceil(videoSeconds)}s`:'Video duration will be checked automatically'}</div>}
+        {durationError&&<div className="error" role="alert">⚠️ {durationError}</div>}
         {mode!=='act'?<>
           <div className="sectionLabel"><span>{mode==='image'?'04':'03'}</span> Choose your style — no prompt needed</div>
           <div className="presetGrid">{availablePresets.map(p=><button key={p.id} type="button" className={`presetCard ${preset===p.id?'selected':''}`} onClick={()=>setPreset(p.id)}><span>{p.icon}</span><strong>{p.name}</strong><small>{p.description}</small></button>)}</div>
@@ -303,7 +305,7 @@ const durationError =
         <button type="submit" className="cta" disabled={!init||!user||busy||cost===null}>{busy?step:`✦ Generate video · ${cost??'—'} credits`}</button>
       </form>}
       {((busy||job&& !['SUCCEEDED','FAILED'].includes(job.status))&& !(mode==='video'&&videoWorkflow==='people'))&&<ProcessingPanel stage={busy?'uploading':job?.status==='SAVING'?'saving':'rendering'} progress={null}/>}
-      {job&&<div className="result"><h3>{job.status==='SUCCEEDED'?'Your video is ready ✦':'Generation · '+job.status}</h3><p>{job.message||'You can leave this screen open while we create your video.'}</p>{job.status==='SUCCEEDED'&&job.url&&<><video controls playsInline src={job.url}/><a className="download" href={job.url} target="_blank" rel="noreferrer">Download video ↗</a></>}{job.status==='FAILED'&&<p>Your credit is refunded when Runway reports a generation failure.</p>}</div>}
+      {job&&<div className="result"><h3>{job.status==='SUCCEEDED'?'Your video is ready ✦':'Generation · '+job.status}</h3><p>{job.message||'You can leave this screen open while we create your video.'}</p>{job.status==='SUCCEEDED'&&job.url&&<><video controls playsInline src={job.url}/><a className="download" href={job.url} target="_blank" rel="noreferrer">Download video ↗</a></>}{job.status==='FAILED'&&<p>Credits for failed generations are refunded automatically.</p>}</div>}
     </>:tab==='credits'?<><div className="sectionLabel"><span>✦</span> Credit packs</div><p className="muted">Create more videos with Telegram Stars. You’ll receive credits after confirmed payment.</p><div className="packs">{Object.entries(PACKS).map(([id,p])=><div className={`pack ${id==='creator'?'recommended':''}`} key={id}><div><span className="packName">{p.label}</span><strong>{p.credits} <small>credits</small></strong></div><button type="button" onClick={()=>buy(id)} disabled={!!payBusy}>{payBusy===id?'Opening…':`${p.stars} ⭐ Stars`}</button></div>)}</div><div className="notice">Payments are processed in Telegram Stars. Credits are added only after Telegram confirms your payment. Prices may change after real-world cost tests.</div></>:<section className="inviteBox"><span className="inviteEmoji">🎁</span><h2>Invite friends. Earn credits.</h2><p>Get <strong>2 credits</strong> when a new friend opens VisionAI for the first time through your link.</p><div className="inviteStats"><div><strong>{referral?.invited??'—'}</strong><small>Friends invited</small></div><div><strong>{referral?.earned??'—'}</strong><small>Credits earned</small></div></div>{referral?.url?<><div className="inviteLink">{referral.url}</div><div className="inviteActions"><button type="button" onClick={shareInvite}>Share in Telegram</button><button type="button" onClick={copyInvite}>Copy link</button></div></>:<p className="notice">Set TELEGRAM_BOT_USERNAME and TELEGRAM_APP_SHORT_NAME in Vercel to activate the invite link.</p>}{shareState&&<p className="muted">{shareState}</p>}<p className="inviteFine">Only new, verified Telegram users count. No self-referrals. Max 10/day and 100 total. Invite credits have no cash value.</p></section>}
     {error&&<div className="error">⚠ {error}</div>}
     <footer>VisionAI · AI-generated videos · Use media you have permission to edit</footer>
