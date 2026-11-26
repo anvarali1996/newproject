@@ -33,6 +33,15 @@ R2 → Bucket → Settings → CORS Policy:
 ```
 `YOUR_PROJECT` ni haqiqiy domeningizga almashtiring. HTTPS custom domen bo'lsa uni ham qo'shing.
 
+### R2 lifecycle: eski upload'larni o'chirish
+`uploads/` dagi manba rasm/videolar faqat generatsiya yoki swap boshlanganda kerak, shuning uchun ular **7 kundan keyin** avtomatik o'chiriladi. `results/` dagi tayyor videolar o'chirilmaydi. Yarim qolgan multipart upload'lar 1 kunda tozalanadi.
+```bash
+node --env-file=.env.local scripts/set-r2-lifecycle.mjs           # dry run: faqat ko'rsatadi
+node --env-file=.env.local scripts/set-r2-lifecycle.mjs --apply   # yozadi (--days 14 bilan muddatni o'zgartirish mumkin)
+```
+Bucket'dagi boshqa lifecycle qoidalari saqlanib qoladi. Buning uchun **Admin Read & Write** R2 token kerak (app'ning Object Read & Write tokeni yetmaydi); admin tokenni faqat shu skript uchun ishlating, Vercel'ga qo'ymang.
+Yoki dashboard orqali: R2 → bucket → Settings → Object lifecycle rules → Add rule: prefix `uploads/`, objects'ni 7 kundan keyin o'chirish.
+
 ## 4. Ishga tushirish
 ```bash
 npm install
