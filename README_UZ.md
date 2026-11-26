@@ -2,12 +2,12 @@
 
 Bu bitta loyiha: Next.js frontend + API, Neon PostgreSQL, Cloudflare R2, Runway AI.
 **Image → Video** (`gen4_turbo`, 5 s) va **Video → Video** (`aleph2`) rejimlari mavjud.
-Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video almashtirish (LovelyRouter) bor. **Rate limit va abuse himoyasi hali qo'shilmagan.**
+Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video almashtirish (LovelyRouter) bor. Bepul video tahlili (swap analyze) har bir foydalanuvchi uchun cheklangan: soatiga 10, kuniga 30 (`SWAP_ANALYSES_PER_HOUR`, `SWAP_ANALYSES_PER_DAY`). Boshqa endpoint'larda rate limit hali yo'q.
 
 ## 1. Hisoblar
 1. @BotFather bot yarating va tokenni oling, Telegram'da Mini App uchun /newapp.
 2. Neon'da loyiha oching; SQL Editor'da migratsiyalarni **shu tartibda, bir martadan** ishga tushiring:
-   `sql/schema.sql` → `sql/upgrade_v2.sql` → `sql/upgrade_v2_1.sql` → `sql/upgrade_v2_2.sql` → `sql/upgrade_viggle.sql`.
+   `sql/schema.sql` → `sql/upgrade_v2.sql` → `sql/upgrade_v2_1.sql` → `sql/upgrade_v2_2.sql` → `sql/upgrade_viggle.sql` → `sql/upgrade_rate_limits.sql`.
    Faqat `schema.sql` yetarli emas: `credit_rates`, referral va `swap_projects` jadvallari keyingi fayllarda.
 3. Cloudflare R2'da `visionai-media` bucket yarating. R2 API tokens orqali object read/write kalitlarini yarating.
 4. Runway Dev dashboard'dan API key va test balans oling. Oddiy Runway veb obunasi har doim API balansi degani emas.

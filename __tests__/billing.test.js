@@ -2,20 +2,11 @@
 // the project's own migrations, so billing regressions fail CI, not users.
 import test, { before } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { PGlite } from '@electric-sql/pglite';
+import { createDb } from './support/pg.js';
 import * as B from '../lib/billing.js';
 
-const MIGRATIONS = ['schema.sql', 'upgrade_v2.sql', 'upgrade_v2_1.sql', 'upgrade_v2_2.sql', 'upgrade_viggle.sql'];
-let pg;
-
-// Mimics @neondatabase/serverless: $n placeholders, values sent as text.
-const sql = async (strings, ...values) => {
-  const text = strings.reduce((acc, s, i) => acc + '$' + i + s);
-  const params = values.map(v => (v == null ? null : typeof v === 'object' ? JSON.stringify(v) : String(v)));
-  return (await pg.query(text, params)).rows;
-};
+let sql;
 const credits = async id => (await sql`SELECT credits FROM users WHERE id=${id}`)[0].credits;
 const user = async credits => { const id = `u${randomUUID().slice(0, 8)}`; await sql`INSERT INTO users(id,credits) VALUES (${id},${credits})`; return id; };
 const job = (userId, o = {}) => ({ id: randomUUID(), userId, sourceKey: `uploads/${userId}/a.jpg`, secondaryKey: null,
@@ -26,10 +17,7 @@ const project = async (userId, status = 'SUBMITTING') => {
   return id;
 };
 
-before(async () => {
-  pg = new PGlite();
-  for (const f of MIGRATIONS) await pg.exec(readFileSync(new URL(`../sql/${f}`, import.meta.url), 'utf8'));
-});
+before(async () => { sql = await createDb(); });
 
 test('debitAndCreateJob charges and records the job together', async () => {
   const u = await user(20), j = job(u);
