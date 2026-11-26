@@ -14,6 +14,6 @@ export async function POST(req) {
       throw badRequest('Unsupported media type or file size');
     await enforceRateLimit(db(), 'upload', user.id);
     const key=`uploads/${user.id}/${randomUUID()}.${config.ext}`;
-    return Response.json({key,uploadUrl:await signedUpload(key,type)});
+    return Response.json({key,uploadUrl:await signedUpload(key,type,size)});
   } catch(e){return jsonError(e);}
 }
