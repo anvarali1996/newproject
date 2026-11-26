@@ -2,17 +2,19 @@
 
 Bu bitta loyiha: Next.js frontend + API, Neon PostgreSQL, Cloudflare R2, Runway AI.
 **Image → Video** (`gen4_turbo`, 5 s) va **Video → Video** (`aleph2`) rejimlari mavjud.
-**Hozircha referral va Telegram Stars yo'q.** Production billing/abuse controls ham hali qo'shilmagan.
+Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video almashtirish (LovelyRouter) bor. **Rate limit va abuse himoyasi hali qo'shilmagan.**
 
 ## 1. Hisoblar
 1. @BotFather bot yarating va tokenni oling, Telegram'da Mini App uchun /newapp.
-2. Neon'da loyiha oching; SQL Editor'da `sql/schema.sql` ni **bir marta** ishga tushiring.
+2. Neon'da loyiha oching; SQL Editor'da migratsiyalarni **shu tartibda, bir martadan** ishga tushiring:
+   `sql/schema.sql` → `sql/upgrade_v2.sql` → `sql/upgrade_v2_1.sql` → `sql/upgrade_v2_2.sql` → `sql/upgrade_viggle.sql`.
+   Faqat `schema.sql` yetarli emas: `credit_rates`, referral va `swap_projects` jadvallari keyingi fayllarda.
 3. Cloudflare R2'da `visionai-media` bucket yarating. R2 API tokens orqali object read/write kalitlarini yarating.
 4. Runway Dev dashboard'dan API key va test balans oling. Oddiy Runway veb obunasi har doim API balansi degani emas.
 5. Vercel'da GitHub orqali loyihani deploy qiling.
 
 ## 2. Environment Variables
-`.env.example` -> `.env.local` qiling va 7 ta maxfiy o'zgaruvchini to'ldiring.
+`.env.example` -> `.env.local` qiling. "Required" bo'limidagi barcha o'zgaruvchilar majburiy; "Optional" bo'limi Viggle, ko'p kishilik almashtirish va bepul kreditlar uchun.
 Production Vercel → Project → Settings → Environment Variables'ga ham shu kalitlarni kiriting; `SIGNUP_CREDITS=0` qoldiring.
 **Token, DB URL va R2 kalitlarini NEXT_PUBLIC_ bilan e'lon qilmang.**
 
@@ -48,11 +50,15 @@ Neon SQL Editor'da Telegram orqali bir marta Mini App'ni ochgandan keyin:
 SELECT id, first_name, credits FROM users;
 UPDATE users SET credits=2 WHERE id='TELEGRAM_ID';
 ```
-Faqat o'zingizning haqiqiy Telegram ID bilan o'zgartiring. 1 image generatsiya 1 kredit, 1 video-to-video 3 kredit deb MVP ichida belgilangan. Bu Runway'ning haqiqiy narx birligi EMAS; moliyaviy riskga qarab narxni moslang.
+Faqat o'zingizning haqiqiy Telegram ID bilan o'zgartiring. Narxlar `credit_rates` jadvalida, soniyasiga: image 1, act 2, video 6 kredit; ko'p kishilik almashtirish `SWAP_CREDITS_PER_SECOND` (standart 12). Bu Runway'ning haqiqiy narx birligi EMAS; moliyaviy riskga qarab narxni moslang.
 
 ## 6. Vercel deployment
 GitHub'ga yuboring (`.env.local` hech qachon commit qilinmasin) → Vercel Import Project → Framework Next.js → Variables → Deploy. `npm run build` bilan tekshiring.
 BotFather `/newapp` uchun Web App URL: `https://YOUR_PROJECT.vercel.app`.
+Stars to'lovlari uchun webhook'ni bir marta ro'yxatdan o'tkazing:
+```bash
+node --env-file=.env.local scripts/set-webhook.mjs https://YOUR_PROJECT.vercel.app
+```
 `https://t.me/BOT_USERNAME/APP_SHORT_NAME` faqat app yaratilgandan keyin ishlaydi.
 
 ## 7. API xulosa
@@ -65,8 +71,8 @@ Frontend `x-telegram-init-data` header'da `window.Telegram.WebApp.initData` yubo
 
 ## Muhim cheklovlar va production oldidan
 - Bu MVP kod: tashqi xizmatlar uchun real API kalitlar bilan jonli end-to-end sinov bu muhitda qilinmagan.
-- **Video-to-video** uchun real MP4 input 2-30 soniya; dastur davomiylikni o'lchamaydi, Runway rad qilishi mumkin.
-- Bir vaqtda ikki `/api/generate` so'rovi kelishi, Runway ish boshlab DB yangilanishi uzilishi kabi holatlarda to'lov task reconciliation, idempotency va monitoringni production uchun qo'shing.
+- Video davomiyligi serverda MP4 faylning o'zidan o'lchanadi: video-to-video 2–10 s, Me in Video 3–30 s.
+- Kredit yechish va qaytarish bitta SQL statement'da bajariladi; boshlanmay qolgan yoki muvaffaqiyatsiz task kreditlari avtomatik qaytariladi (`lib/billing.js`). Provider task boshlanib, ID saqlanmay qolsa, u task yetim qoladi: monitoring qo'shing.
 - R2 yuklangan media turi sarlavha orqali tekshiriladi; fayl mazmunini tekshirish, malware/moderatsiya, rate limits, GDPR retention/deletion, foydalanish huquqi, referral abuse himoyasi qo'shilishi kerak.
 - Tayyor Runway output'ni R2'ga stream qilish `/api/status` ichida bajariladi; katta natijalarda Vercel vaqt limiti bo'lishi mumkin. Katta miqyos uchun queue/worker bilan ajrating.
 - Runway AI API kreditlari pullik bo'lishi mumkin; bepul signup kreditini production'da ehtiyotkorlik bilan oching.
