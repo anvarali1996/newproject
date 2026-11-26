@@ -10,7 +10,7 @@ export async function POST(req) {
     const user=auth(req);
     const {type,size,mode}=await readJson(req);
     const config=rule(type);
-    if(!config||(['act','swap'].includes(mode) ? !['image','video'].includes(config.mode) : config.mode!==mode) || !Number.isSafeInteger(size) || size<=0 || size>config.max)
+    if(!config||(['act','swap'].includes(mode) ? !['image','video'].includes(config.mode) : config.mode!==(mode==='hd'?'image':mode)) || !Number.isSafeInteger(size) || size<=0 || size>config.max)
       throw badRequest('Unsupported media type or file size');
     await enforceRateLimit(db(), 'upload', user.id);
     const key=`uploads/${user.id}/${randomUUID()}.${config.ext}`;

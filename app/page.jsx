@@ -5,9 +5,12 @@ import {PRESETS,buildPrompt} from '../lib/prompt-presets.js';
 
 const MODES=[
   {id:'image',icon:'✦',title:'Photo to Video',subtitle:'Bring a photo to life',detail:'5 or 10 sec',rate:'1 credit/sec'},
+  {id:'hd',icon:'✺',title:'Photo to Video HD',subtitle:'Sharper 720p video with natural sound',detail:'5 or 10 sec',rate:'2 credits/sec'},
   {id:'act',icon:'◈',title:'Me in Video',subtitle:'Animate your portrait with a performance video',detail:'3–30 sec',rate:'2 credits/sec'},
   {id:'video',icon:'▣',title:'Video Remix',subtitle:'Replace multiple people or restyle a clip',detail:'2–10 sec',rate:'Choose an option'}
 ];
+// Both photo modes share the upload, duration and preset steps.
+const isPhotoMode=m=>m==='image'||m==='hd';
 function UploadField({title,sub,file,onChange,accept}){
   return <label className={`uploadBox ${file?'hasFile':''}`}>
     <span className="uploadIcon">{file?'✓':'↑'}</span>
@@ -70,6 +73,7 @@ export default function Home(){
   const [scanProgress,setScanProgress]=useState(null),[swapUrl,setSwapUrl]=useState(''),[telegramDelivery,setTelegramDelivery]=useState('');
   const [scanBusy,setScanBusy]=useState(false);
   const [swapEnabled,setSwapEnabled]=useState(false);
+  const [features,setFeatures]=useState({});
   const stopRef=useRef(false);
   const api=useCallback(async(path,method='GET',body=null)=>{
     const res=await fetch(path,{method,headers:{'x-telegram-init-data':init,...(body?{'Content-Type':'application/json'}:{})},
@@ -78,7 +82,7 @@ export default function Home(){
     if(!res.ok)throw Error(data.error||`API ${res.status}`);
     return data;
   },[init]);
-  const refreshUser=useCallback(async()=>{if(init){const d=await api('/api/me');setUser(d.user);setReferral(d.referral);}},[init,api]);
+  const refreshUser=useCallback(async()=>{if(init){const d=await api('/api/me');setUser(d.user);setReferral(d.referral);setFeatures(d.features||{});}},[init,api]);
   useEffect(()=>{
     // Resume a video that was still processing if the Mini App was closed.
     try{const previous=window.localStorage.getItem(SWAP_KEY);if(previous&&/^[0-9a-f-]{36}$/i.test(previous)){setMode('video');setVideoWorkflow('people');setScanId(previous);setScanStatus('ANALYZING');}}catch{}
@@ -147,10 +151,12 @@ export default function Home(){
     secondsOf(f).then(s=>{if(active)setVideoSeconds(s);}).catch(e=>{if(active)setError(e.message);});
     return ()=>{active=false;};
   },[mainFile,mode]);
-  const rawSeconds = mode === 'image' ? seconds : videoSeconds ? Math.ceil(videoSeconds) : 0;
+  const photoMode = isPhotoMode(mode);
+  const visibleModes = MODES.filter(m => m.id !== 'hd' || features.hd);
+  const rawSeconds = photoMode ? seconds : videoSeconds ? Math.ceil(videoSeconds) : 0;
   // Same limits the server enforces in /api/generate and /api/swap/analyze.
   const [minVideoSeconds,maxVideoSeconds] = mode === 'act' ? [3,30] : [2,10];
-  const durationError = mode !== 'image' && mainFile && videoSeconds > 0 &&
+  const durationError = !photoMode && mainFile && videoSeconds > 0 &&
     (videoSeconds < minVideoSeconds || videoSeconds > maxVideoSeconds)
     ? `Your video is ${videoSeconds.toFixed(1)} seconds long. This option accepts ${minVideoSeconds}–${maxVideoSeconds} second videos — please trim it and upload again.`
     : '';
@@ -258,7 +264,7 @@ export default function Home(){
     <div className="segmented"><button className={tab==='create'?'active':''} onClick={()=>setTab('create')} type="button">✦ Create</button><button className={tab==='credits'?'active':''} onClick={()=>setTab('credits')} type="button">✧ Credits</button><button className={tab==='invite'?'active':''} onClick={()=>setTab('invite')} type="button">🎁 Invite</button></div>
     {tab==='create'?<>
       <div className="sectionLabel"><span>01</span> Choose your magic</div>
-      <div className="modeGrid">{MODES.map(m=><button key={m.id} type="button" aria-pressed={mode===m.id} className={`modeCard ${mode===m.id?'chosen':''}`} onClick={() => selectMode(m.id)}><span className="selectedTick">{mode===m.id?'✓ Selected':'Choose'}</span><span className="modeGlyph">{m.icon}</span><strong>{m.title}</strong><span className="modeSub">{m.subtitle}</span><span className="modeRate">{m.id==='video'?videoWorkflow==='people'?`Multi-face · ${swapRate} credits/sec`:`${rates?.video??'…'} credits/sec`:`${rates?.[m.id] ?? RATE[m.id]} credits/sec`}</span></button>)}</div>
+      <div className={`modeGrid ${visibleModes.length===4?'four':''}`}>{visibleModes.map(m=><button key={m.id} type="button" aria-pressed={mode===m.id} className={`modeCard ${mode===m.id?'chosen':''}`} onClick={() => selectMode(m.id)}><span className="selectedTick">{mode===m.id?'✓ Selected':'Choose'}</span><span className="modeGlyph">{m.icon}</span><strong>{m.title}</strong><span className="modeSub">{m.subtitle}</span><span className="modeRate">{m.id==='video'?videoWorkflow==='people'?`Multi-face · ${swapRate} credits/sec`:`${rates?.video??'…'} credits/sec`:`${rates?.[m.id] ?? RATE[m.id]} credits/sec`}</span></button>)}</div>
       {mode==='video'&&<div className="workflowTabs" role="group" aria-label="Video Remix type">
         <button type="button" aria-pressed={videoWorkflow==='people'} className={videoWorkflow==='people'?'active':''} onClick={()=>{setVideoWorkflow('people');resetScan();setMainFile(null);setError('')}}>👥 Replace people</button>
         <button type="button" aria-pressed={videoWorkflow==='style'} className={videoWorkflow==='style'?'active':''} onClick={()=>{setVideoWorkflow('style');resetScan();setMainFile(null);setError('')}}>🎨 Change style</button>
@@ -291,11 +297,12 @@ export default function Home(){
       </div>:<form onSubmit={generate}>
         <div className="sectionLabel"><span>02</span> Add your media</div>
         {mode==='act'&&<><UploadField title="Upload your portrait" sub="Clear front-facing image · JPG, PNG, WebP · up to 10 MB" file={photo} onChange={setPhoto} accept="image/jpeg,image/png,image/webp"/><div className="fieldCaption">Then choose a video whose facial expressions and movements you want to follow.</div></>}
-        <UploadField title={mode==='image'?'Upload a photo':'Upload your video'} sub={mode==='image'?'JPG, PNG or WebP · up to 10 MB':'MP4 · 2–10s for remix, 3–30s for Me in Video · up to 50 MB'} file={mainFile} onChange={updateVideo} accept={mode==='image'?'image/jpeg,image/png,image/webp':'video/mp4'}/>
-        {mode==='image'?<><div className="sectionLabel"><span>03</span> Duration</div><div className="duration"><button type="button" className={seconds===5?'active':''} onClick={()=>setSeconds(5)}>5 seconds</button><button type="button" className={seconds===10?'active':''} onClick={()=>setSeconds(10)}>10 seconds</button></div></>:<div className="durationInfo">{videoSeconds?`Video duration: ${videoSeconds.toFixed(1)}s · billed as ${Math.ceil(videoSeconds)}s`:'Video duration will be checked automatically'}</div>}
+        <UploadField title={photoMode?'Upload a photo':'Upload your video'} sub={photoMode?'JPG, PNG or WebP · up to 10 MB':'MP4 · 2–10s for remix, 3–30s for Me in Video · up to 50 MB'} file={mainFile} onChange={updateVideo} accept={photoMode?'image/jpeg,image/png,image/webp':'video/mp4'}/>
+        {mode==='hd'&&<div className="notice">HD uses Google’s video model: 720p with generated sound. Photos of well-known people or of children may be declined — credits are refunded automatically if that happens.</div>}
+        {photoMode?<><div className="sectionLabel"><span>03</span> Duration</div><div className="duration"><button type="button" className={seconds===5?'active':''} onClick={()=>setSeconds(5)}>5 seconds</button><button type="button" className={seconds===10?'active':''} onClick={()=>setSeconds(10)}>10 seconds</button></div></>:<div className="durationInfo">{videoSeconds?`Video duration: ${videoSeconds.toFixed(1)}s · billed as ${Math.ceil(videoSeconds)}s`:'Video duration will be checked automatically'}</div>}
         {durationError&&<div className="error" role="alert">⚠️ {durationError}</div>}
         {mode!=='act'?<>
-          <div className="sectionLabel"><span>{mode==='image'?'04':'03'}</span> Choose your style — no prompt needed</div>
+          <div className="sectionLabel"><span>{photoMode?'04':'03'}</span> Choose your style — no prompt needed</div>
           <div className="presetGrid">{availablePresets.map(p=><button key={p.id} type="button" className={`presetCard ${preset===p.id?'selected':''}`} onClick={()=>setPreset(p.id)}><span>{p.icon}</span><strong>{p.name}</strong><small>{p.description}</small></button>)}</div>
           <details className="advanced"><summary>✎ Optional: add an instruction</summary><textarea className="prompt" value={extraPrompt} onChange={e=>setExtraPrompt(e.target.value)} maxLength={300} placeholder="For example: gentle wind, keep colors natural…"/><small>Up to 300 characters. Optional.</small></details>
           <details className="preview"><summary>See AI-generated prompt</summary><p>{previewPrompt}</p></details>

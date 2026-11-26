@@ -50,3 +50,6 @@
 .progressIndeterminate{height:100%;width:40%;background:linear-gradient(90deg,transparent,#ac7dff,#eaa0d5,transparent);animation:visionSlide 1.6s ease-in-out infinite}
 @keyframes visionSpin{to{transform:rotate(360deg)}}@keyframes visionReverse{to{transform:rotate(-360deg)}}@keyframes visionSlide{from{transform:translateX(-120%)}to{transform:translateX(350%)}}
 @media(prefers-reduced-motion:reduce){.progressOrbit,.progressOrbit>span,.progressIndeterminate{animation:none}}
+
+/* Four mode cards (HD enabled): two per row so each card keeps room for its text */
+.modeGrid.four{grid-template-columns:repeat(2,1fr)}.modeGrid.four .modeCard{min-height:132px}

@@ -1,7 +1,7 @@
 import { auth, jsonError } from '../../../../lib/auth.js';
 import { db } from '../../../../lib/db.js';
-import { DEFAULT_PROVIDER, pollTask } from '../../../../lib/providers/index.js';
-import { saveResult, signedDownload } from '../../../../lib/r2.js';
+import { DEFAULT_PROVIDER, cleanupTask, pollTask } from '../../../../lib/providers/index.js';
+import { saveResult, saveResultBytes, signedDownload } from '../../../../lib/r2.js';
 import { badRequest, isTransient } from '../../../../lib/errors.js';
 import { failAndRefundJob, refundStuckJob } from '../../../../lib/billing.js';
 
@@ -59,6 +59,7 @@ export async function GET(req, context) {
     // 7. AI haqiqatan FAILED/CANCELLED qaytarsa: refund faqat bir marta (atomik)
     if (task.state === 'FAILED') {
       await failAndRefundJob(sql, id, `${provider} generation failed`);
+      await cleanupTask(provider, job.runway_id);
       return Response.json({ status: 'FAILED', message: 'Generation failed. Credits refunded.' });
     }
 
@@ -68,16 +69,19 @@ export async function GET(req, context) {
     }
 
     // 9. Tayyor, lekin link hali kelmagan bo'lsa, keyingi tekshiruvni kutamiz
-    if (!task.videoUrl) {
+    if (!task.videoUrl && !task.videoBytes) {
       return Response.json({ status: 'RUNNING', message: 'Video is ready. Waiting for download URL...' });
     }
 
     const resultKey = `results/${user.id}/${id}.mp4`;
     try {
       // 10. Tayyor videoni Cloudflare R2 ga saqlash va Neon'da SUCCEEDED qilish
-      await saveResult(task.videoUrl, resultKey);
+      if (task.videoBytes) await saveResultBytes(task.videoBytes, resultKey);
+      else await saveResult(task.videoUrl, resultKey);
       await sql`UPDATE jobs SET status = 'SUCCEEDED', output_key = ${resultKey}
         WHERE id = ${id} AND status <> 'FAILED'`;
+      // Saved on our side: the provider's copy (photo + video) is no longer needed.
+      await cleanupTask(provider, job.runway_id);
       return Response.json({ status: 'SUCCEEDED', url: await signedDownload(resultKey, 3600) });
     } catch (error) {
       // Video qaytadan generatsiya qilinmaydi.

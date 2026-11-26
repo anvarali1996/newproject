@@ -1,7 +1,8 @@
 // Signing is local (no network), so this checks the real presigned URL.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { signedUpload } from '../lib/r2.js';
+import { S3Client } from '@aws-sdk/client-s3';
+import { saveResultBytes, signedUpload } from '../lib/r2.js';
 
 const ENV = { R2_ACCOUNT_ID: 'acct', R2_ACCESS_KEY_ID: 'AKIDEXAMPLE', R2_SECRET_ACCESS_KEY: 'secret', R2_BUCKET: 'bucket' };
 
@@ -39,4 +40,18 @@ test('signedUpload refuses unvalidated sizes and types', async t => {
     ['image/gif', 100], ['video/mp4', undefined]]) {
     await assert.rejects(signedUpload('uploads/1/a', type, size), `${type} ${size}`);
   }
+});
+
+test('saveResultBytes stores provider bytes as an mp4 and refuses empty results', async t => {
+  withR2Env(t);
+  const sent = [];
+  t.mock.method(S3Client.prototype, 'send', async command => { sent.push(command.input); return {}; });
+  await saveResultBytes(new Uint8Array([1, 2, 3]), 'results/1/j.mp4');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].Key, 'results/1/j.mp4');
+  assert.equal(sent[0].ContentType, 'video/mp4');
+  assert.equal(sent[0].ContentLength, 3);
+  await assert.rejects(saveResultBytes(new Uint8Array(), 'results/1/j.mp4'), /Empty/);
+  await assert.rejects(saveResultBytes('not bytes', 'results/1/j.mp4'), /Empty/);
+  assert.equal(sent.length, 1);
 });

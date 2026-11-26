@@ -7,7 +7,7 @@ Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video
 ## 1. Hisoblar
 1. @BotFather bot yarating va tokenni oling, Telegram'da Mini App uchun /newapp.
 2. Neon'da loyiha oching; SQL Editor'da migratsiyalarni **shu tartibda, bir martadan** ishga tushiring:
-   `sql/schema.sql` → `sql/upgrade_v2.sql` → `sql/upgrade_v2_1.sql` → `sql/upgrade_v2_2.sql` → `sql/upgrade_viggle.sql` → `sql/upgrade_rate_limits.sql`.
+   `sql/schema.sql` → `sql/upgrade_v2.sql` → `sql/upgrade_v2_1.sql` → `sql/upgrade_v2_2.sql` → `sql/upgrade_viggle.sql` → `sql/upgrade_rate_limits.sql` → `sql/upgrade_omni.sql`.
    Faqat `schema.sql` yetarli emas: `credit_rates`, referral va `swap_projects` jadvallari keyingi fayllarda.
 3. Cloudflare R2'da `visionai-media` bucket yarating. R2 API tokens orqali object read/write kalitlarini yarating.
 4. Runway Dev dashboard'dan API key va test balans oling. Oddiy Runway veb obunasi har doim API balansi degani emas.
@@ -17,6 +17,13 @@ Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video
 `.env.example` -> `.env.local` qiling. "Required" bo'limidagi barcha o'zgaruvchilar majburiy; "Optional" bo'limi Viggle, ko'p kishilik almashtirish va bepul kreditlar uchun.
 Production Vercel → Project → Settings → Environment Variables'ga ham shu kalitlarni kiriting; `SIGNUP_CREDITS=0` qoldiring.
 **Token, DB URL va R2 kalitlarini NEXT_PUBLIC_ bilan e'lon qilmang.**
+
+### HD + ovoz rejimi (Gemini Omni Flash)
+"Photo to Video HD" — 720p, 9:16, ovozli video, 2 kredit/s (Google narxi ~$0.07/s). Yoqish tartibi:
+1. Neon'da `sql/upgrade_omni.sql` ni ishga tushiring.
+2. Vercel'ga `GEMINI_API_KEY` (aistudio.google.com) va `OMNI_ENABLED=<sizning Telegram ID>` qo'shing — karta faqat sizga ko'rinadi.
+3. Sinovdan keyin `OMNI_ENABLED=all`. O'chirish: qiymatni bo'shating.
+Video tayyor bo'lgach (yoki xato bo'lsa) Google'dagi interaction (rasm + video) avtomatik o'chiriladi. Taniqli shaxslar va bolalar rasmlarini Google rad etishi mumkin; kredit qaytariladi.
 
 ## 3. R2 CORS
 R2 → Bucket → Settings → CORS Policy:

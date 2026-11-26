@@ -14,10 +14,11 @@ test('priceFor charges rate x seconds within each mode limit', () => {
   assert.equal(priceFor('video', 10), 10 * RATE.video);
   assert.equal(priceFor('act', 30), 30 * RATE.act);
   assert.equal(priceFor('image', 10, { image: 3 }), 30);
+  assert.equal(priceFor('hd', 10), 20);
 });
 
 test('priceFor rejects bad durations and modes with 400', () => {
-  for (const [mode, s] of [['image', 7], ['act', 2], ['act', 31], ['video', 1], ['video', 11],
+  for (const [mode, s] of [['image', 7], ['hd', 7], ['hd', 15], ['act', 2], ['act', 31], ['video', 1], ['video', 11],
     ['video', 2.5], ['video', NaN], ['bogus', 5]]) {
     assert.throws(() => priceFor(mode, s), status400, `${mode} ${s}`);
   }
@@ -82,6 +83,15 @@ test('buildPrompt uses server presets and cleans the extra instruction', () => {
   assert.ok(p.endsWith('slow zoom in'));
   assert.equal(buildPrompt('act', 'anything'), '');
   assert.ok(buildPrompt('video', 'neon', 'x'.repeat(300)).length <= 1000);
+});
+
+test('hd mode reuses the photo presets and asks for the first frame and sound', () => {
+  assert.equal(PRESETS.hd, PRESETS.image);
+  assert.ok(Object.isFrozen(PRESETS));
+  const p = buildPrompt('hd', 'natural');
+  assert.match(p, /first frame/);
+  assert.match(p, /ambient sound/);
+  assert.ok(p.startsWith(buildPrompt('image', 'natural').split('.')[0]));
 });
 
 test('buildPrompt rejects unknown presets and oversized extras with 400', () => {

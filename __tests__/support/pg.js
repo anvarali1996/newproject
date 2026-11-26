@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 
 export const MIGRATIONS = ['schema.sql', 'upgrade_v2.sql', 'upgrade_v2_1.sql', 'upgrade_v2_2.sql',
-  'upgrade_viggle.sql', 'upgrade_rate_limits.sql'];
+  'upgrade_viggle.sql', 'upgrade_rate_limits.sql', 'upgrade_omni.sql'];
 
 export async function createDb() {
   const pg = new PGlite();

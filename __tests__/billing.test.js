@@ -32,6 +32,14 @@ test('debitAndCreateJob with too few credits charges nothing and creates nothing
   assert.equal((await sql`SELECT count(*)::int AS n FROM jobs WHERE id=${j.id}`)[0].n, 0);
 });
 
+test('upgrade_omni allows hd jobs and prices hd at 2 credits per second', async () => {
+  const u = await user(20), j = job(u, { mode: 'hd', cost: 10, provider: 'omni' });
+  assert.equal(await B.debitAndCreateJob(sql, j), 10);
+  assert.equal((await sql`SELECT mode,provider FROM jobs WHERE id=${j.id}`)[0].provider, 'omni');
+  const [{ credits_per_second }] = await sql`SELECT credits_per_second FROM credit_rates WHERE mode='hd'`;
+  assert.equal(Number(credits_per_second), 2);
+});
+
 test('a failed job insert rolls the debit back (credits were lost before)', async () => {
   const u = await user(20);
   await assert.rejects(B.debitAndCreateJob(sql, job(u, { mode: 'bogus' })));
