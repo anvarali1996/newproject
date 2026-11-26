@@ -4,6 +4,7 @@ import {getReplacement,cleanCast,SWAP_RATE} from '../../../../../lib/lovely.js';
 import {signedDownload,saveResult} from '../../../../../lib/r2.js';
 import {notifySwapOnce} from '../../../../../lib/telegram-delivery.js';
 import {badRequest,isTransient} from '../../../../../lib/errors.js';
+import {failAndRefundSwap} from '../../../../../lib/billing.js';
 export const runtime='nodejs';
 export const maxDuration=120;
 
@@ -50,9 +51,7 @@ export async function GET(req,{params}){
     }
     if(status==='ready'&&project.status!=='ANALYZING')return Response.json({status:'RENDERING',progress:null,message:'Preparing your render…'});
     if(['failed','cancelled'].includes(status)){
-      const changed=await sql`UPDATE swap_projects SET status='FAILED',error_message='Video replacement failed'
-        WHERE id=${id} AND status NOT IN ('FAILED','SUCCEEDED') RETURNING credits_charged`;
-      if(changed.length && changed[0].credits_charged>0)await sql`UPDATE users SET credits=credits+${changed[0].credits_charged} WHERE id=${user.id}`;
+      await failAndRefundSwap(sql,id,'Video replacement failed');
       return Response.json({status:'FAILED',message:'Video replacement failed; charged credits were refunded'});
     }
     if(status==='succeeded'&&result.url){

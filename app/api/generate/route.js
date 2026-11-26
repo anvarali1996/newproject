@@ -7,13 +7,14 @@ import { createViggleVideo } from '../../../lib/viggle.js';
 import { billedPrice } from '../../../lib/pricing-db.js';
 import { buildPrompt } from '../../../lib/prompt-presets.js';
 import { badRequest, paymentRequired, readJson } from '../../../lib/errors.js';
+import { debitAndCreateJob, failAndRefundJob } from '../../../lib/billing.js';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 export async function POST(req) {
-  let jobId = null, charged = false, user = null, cost = 0;
+  let jobId = null;
   try {
-    user = auth(req);
+    const user = auth(req);
     const { mode, key, videoKey, presetId, extraPrompt, seconds: requestedSeconds } = await readJson(req);
     if (!['image', 'video', 'act'].includes(mode)) throw badRequest('Unsupported mode');
     const provider = mode === 'act' && process.env.VIDEO_PROVIDER === 'viggle' ? 'viggle' : 'runway';
@@ -32,32 +33,28 @@ export async function POST(req) {
       seconds = await verifiedVideoSeconds(videoKey, user.id, { minSeconds: 3, maxSeconds: 30 });
       performanceUri = await verifySource(videoKey, user.id, 'video');
     }
-    cost = await billedPrice(mode, seconds);
+    const cost = await billedPrice(mode, seconds);
     const sql = db();
     await upsertUser(user);
-    const debit = await sql`UPDATE users SET credits=credits-${cost}
-      WHERE id=${user.id} AND credits>=${cost} RETURNING credits`;
-    if (!debit.length) throw paymentRequired(`Not enough credits (need ${cost})`);
-    charged = true;
-    jobId = randomUUID();
-    await sql`INSERT INTO jobs(id,user_id,source_key,secondary_source_key,mode,prompt,duration_seconds,cost,status,provider)
-      VALUES(${jobId},${user.id},${key},${videoKey || null},${mode},${mode === 'act' ? 'Performance transfer' : prompt.trim()},${seconds},${cost},'STARTING',${provider})`;
+    const id = randomUUID();
+    // Debit + job row in one statement: a failed insert can no longer eat credits.
+    const remaining = await debitAndCreateJob(sql, {
+      id, userId: user.id, sourceKey: key, secondaryKey: videoKey || null, mode,
+      prompt: mode === 'act' ? 'Performance transfer' : prompt.trim(), seconds, cost, provider,
+    });
+    if (remaining === null) throw paymentRequired(`Not enough credits (need ${cost})`);
+    jobId = id;
     const task = provider === 'viggle'
       ? await createViggleVideo(sourceUrl, performanceUri)
       : await createVideo(mode, sourceUrl, mode === 'act' ? '' : prompt.trim(), { seconds, performanceUri });
     if (!task?.id) throw Error(`${provider} did not return a task ID`);
     await sql`UPDATE jobs SET runway_id=${task.id},status='PENDING' WHERE id=${jobId}`;
-    return Response.json({ id: jobId, status: 'PENDING', remaining: debit[0].credits, cost, seconds });
+    return Response.json({ id: jobId, status: 'PENDING', remaining, cost, seconds });
   } catch (e) {
-    if (charged && user) {
-      try {
-        const sql = db();
-        if (jobId) {
-          const rows = await sql`UPDATE jobs SET status='FAILED',error_message='Task could not start'
-            WHERE id=${jobId} AND status='STARTING' RETURNING id`;
-          if (rows.length) await sql`UPDATE users SET credits=credits+${cost} WHERE id=${user.id}`;
-        } else await sql`UPDATE users SET credits=credits+${cost} WHERE id=${user.id}`;
-      } catch (x) { console.error('Refund needs investigation:', x); }
+    // jobId is set only once the user has been charged for this job.
+    if (jobId) {
+      try { await failAndRefundJob(db(), jobId, 'Task could not start'); }
+      catch (x) { console.error(`Refund for job ${jobId} needs investigation:`, x); }
     }
     return jsonError(e);
   }

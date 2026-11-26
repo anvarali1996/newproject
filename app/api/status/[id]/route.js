@@ -4,6 +4,7 @@ import { runway } from '../../../../lib/runway.js';
 import { getViggleVideo } from '../../../../lib/viggle.js';
 import { saveResult, signedDownload } from '../../../../lib/r2.js';
 import { badRequest, isTransient } from '../../../../lib/errors.js';
+import { failAndRefundJob, refundStuckJob } from '../../../../lib/billing.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -60,6 +61,13 @@ export async function GET(req, context) {
 
     // 5. AI task ID hali olinmagan bo'lsa
     if (!job.runway_id) {
+      // The start request died before saving the provider task: give credits back.
+      if (await refundStuckJob(sql, id)) {
+        return Response.json({
+          status: 'FAILED',
+          message: 'Generation could not start. Credits refunded.'
+        });
+      }
       return Response.json({
         status: 'STARTING',
         message: 'Starting video generation...'
@@ -102,24 +110,8 @@ export async function GET(req, context) {
     if (
       ['FAILED', 'CANCELED', 'CANCELLED'].includes(state)
     ) {
-      // Bir ish uchun refund faqat bir marta
-      const changed = await sql`
-        UPDATE jobs
-        SET
-          status = 'FAILED',
-          error_message = ${provider + ' generation failed'}
-        WHERE id = ${id}
-          AND status NOT IN ('FAILED', 'SUCCEEDED')
-        RETURNING cost
-      `;
-
-      if (changed.length) {
-        await sql`
-          UPDATE users
-          SET credits = credits + ${changed[0].cost}
-          WHERE id = ${user.id}
-        `;
-      }
+      // Bir ish uchun refund faqat bir marta (bitta atomik so'rov)
+      await failAndRefundJob(sql, id, `${provider} generation failed`);
 
       return Response.json({
         status: 'FAILED',
@@ -161,6 +153,7 @@ export async function GET(req, context) {
             status = 'SUCCEEDED',
             output_key = ${resultKey}
           WHERE id = ${id}
+            AND status <> 'FAILED'
         `;
 
         // 12. Mini App uchun tayyor video havolasi
