@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { priceFor, PACKS, RATE } from '../lib/pricing.js';
 import { mp4Duration } from '../lib/mp4-duration.js';
 import { buildPrompt, PRESETS } from '../lib/prompt-presets.js';
+import { imageAspect, imagePrompt } from '../lib/text-image.js';
 import { referrerFromVerifiedInitData, referralUrl } from '../lib/referral-utils.js';
 import { costForSwap, cleanCast, isCastId } from '../lib/lovely.js';
 
@@ -15,11 +16,13 @@ test('priceFor charges rate x seconds within each mode limit', () => {
   assert.equal(priceFor('act', 30), 30 * RATE.act);
   assert.equal(priceFor('image', 10, { image: 3 }), 30);
   assert.equal(priceFor('hd', 10), 20);
+  assert.equal(priceFor('text2img', 1), 1);
+  assert.equal(priceFor('text2img', 1, { text2img: 3 }), 3);
 });
 
 test('priceFor rejects bad durations and modes with 400', () => {
   for (const [mode, s] of [['image', 7], ['hd', 7], ['hd', 15], ['act', 2], ['act', 31], ['video', 1], ['video', 11],
-    ['video', 2.5], ['video', NaN], ['bogus', 5]]) {
+    ['video', 2.5], ['video', NaN], ['bogus', 5], ['text2img', 0], ['text2img', 2], ['text2img', 5]]) {
     assert.throws(() => priceFor(mode, s), status400, `${mode} ${s}`);
   }
 });
@@ -132,4 +135,13 @@ test('swap helpers: cost rounds seconds up, cast is sanitized', () => {
   const cast = cleanCast([{ id: 'p1', seconds: 3 }, null, { id: 'evil' }, { id: 'p2' }, { id: 'p3' }, { id: 'p4' }, { id: 'p5' }]);
   assert.deepEqual(cast, [{ id: 'p1', seconds: 3 }, { id: 'p2', seconds: 0 }, { id: 'p3', seconds: 0 }, { id: 'p4', seconds: 0 }]);
   assert.deepEqual(cleanCast('nope'), []);
+});
+
+test('imagePrompt tidies the description and bounds it; imageAspect allows only known shapes', () => {
+  assert.equal(imagePrompt('  a  red\n fox  '), 'a red fox');
+  for (const bad of [undefined, 42, '', '   ', 'fox', 'x'.repeat(1001)]) assert.throws(() => imagePrompt(bad), status400, String(bad).slice(0, 20));
+  assert.equal(imagePrompt('x'.repeat(1000)).length, 1000);
+  assert.equal(imageAspect(), 'portrait');
+  for (const a of ['portrait', 'square', 'landscape']) assert.equal(imageAspect(a), a);
+  for (const bad of ['wide', 'toString', '__proto__', null]) assert.throws(() => imageAspect(bad), status400, String(bad));
 });

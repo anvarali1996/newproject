@@ -25,6 +25,17 @@ test('debitAndCreateJob charges and records the job together', async () => {
   assert.equal((await sql`SELECT status FROM jobs WHERE id=${j.id}`)[0].status, 'STARTING');
 });
 
+test('upgrade_text_image allows text2img jobs with no source file or duration, at 1 credit per image', async () => {
+  const u = await user(5), j = job(u, { mode: 'text2img', sourceKey: null, seconds: null, cost: 1, provider: 'gemini' });
+  assert.equal(await B.debitAndCreateJob(sql, j), 4);
+  const [row] = await sql`SELECT mode,provider,source_key,duration_seconds FROM jobs WHERE id=${j.id}`;
+  assert.deepEqual([row.mode, row.provider, row.source_key, row.duration_seconds], ['text2img', 'gemini', null, null]);
+  const [{ credits_per_second }] = await sql`SELECT credits_per_second FROM credit_rates WHERE mode='text2img'`;
+  assert.equal(Number(credits_per_second), 1);
+  assert.equal(await B.failAndRefundJob(sql, j.id, 'gemini generation failed'), true);
+  assert.equal(await credits(u), 5);
+});
+
 test('debitAndCreateJob with too few credits charges nothing and creates nothing', async () => {
   const u = await user(3), j = job(u, { cost: 10 });
   assert.equal(await B.debitAndCreateJob(sql, j), null);

@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { S3Client } from '@aws-sdk/client-s3';
-import { saveResultBytes, signedUpload } from '../lib/r2.js';
+import { downloadResult, imageKind, saveResultBytes, signedUpload } from '../lib/r2.js';
 
 const ENV = { R2_ACCOUNT_ID: 'acct', R2_ACCESS_KEY_ID: 'AKIDEXAMPLE', R2_SECRET_ACCESS_KEY: 'secret', R2_BUCKET: 'bucket' };
 
@@ -53,5 +53,25 @@ test('saveResultBytes stores provider bytes as an mp4 and refuses empty results'
   assert.equal(sent[0].ContentLength, 3);
   await assert.rejects(saveResultBytes(new Uint8Array(), 'results/1/j.mp4'), /Empty/);
   await assert.rejects(saveResultBytes('not bytes', 'results/1/j.mp4'), /Empty/);
-  assert.equal(sent.length, 1);
+  await saveResultBytes(new Uint8Array([1, 2, 3]), 'results/1/j.png', 'image/png');
+  assert.equal(sent[1].ContentType, 'image/png');
+  await assert.rejects(saveResultBytes(new Uint8Array([1]), 'results/1/j.html', 'text/html'), /Unsupported/);
+  assert.equal(sent.length, 2);
+});
+
+test('imageKind trusts only the file signature', () => {
+  const pad = Buffer.alloc(16);
+  assert.deepEqual(imageKind(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pad])), { type: 'image/png', ext: 'png' });
+  assert.deepEqual(imageKind(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), pad])), { type: 'image/jpeg', ext: 'jpg' });
+  assert.deepEqual(imageKind(Buffer.concat([Buffer.from('RIFF\0\0\0\0WEBPVP8 '), pad])), { type: 'image/webp', ext: 'webp' });
+  for (const bad of [Buffer.from('<html><body>nope</body></html>'), Buffer.from([0x89, 0x50]), new Uint8Array(), 'PNG']) {
+    assert.equal(imageKind(bad), null);
+  }
+});
+
+test('downloadResult refuses non-HTTPS links and oversized files', async t => {
+  await assert.rejects(downloadResult('http://cdn.example/a.png', 100), /Invalid/);
+  t.mock.method(globalThis, 'fetch', async () => new Response(Buffer.alloc(200)));
+  await assert.rejects(downloadResult('https://cdn.example/a.png', 100), /too large/);
+  assert.equal((await downloadResult('https://cdn.example/a.png', 500)).length, 200);
 });

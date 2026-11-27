@@ -2,13 +2,20 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {PACKS,priceFor,RATE} from '../lib/pricing.js';
 import {PRESETS,buildPrompt} from '../lib/prompt-presets.js';
+import {IMAGE_ASPECTS,MAX_IMAGE_PROMPT} from '../lib/text-image.js';
 
 const MODES=[
   {id:'image',icon:'✦',title:'Photo to Video',subtitle:'Bring a photo to life',detail:'5 or 10 sec',rate:'1 credit/sec'},
   {id:'hd',icon:'✺',title:'Photo to Video HD',subtitle:'Sharper 720p video with natural sound',detail:'5 or 10 sec',rate:'2 credits/sec'},
   {id:'act',icon:'◈',title:'Me in Video',subtitle:'Animate your portrait with a performance video',detail:'3–30 sec',rate:'2 credits/sec'},
-  {id:'video',icon:'▣',title:'Video Remix',subtitle:'Replace multiple people or restyle a clip',detail:'2–10 sec',rate:'Choose an option'}
+  {id:'video',icon:'▣',title:'Video Remix',subtitle:'Replace multiple people or restyle a clip',detail:'2–10 sec',rate:'Choose an option'},
+  {id:'text2img',icon:'❖',title:'Text to Image',subtitle:'Describe a picture and AI draws it',detail:'1 image',rate:'1 credit/image'}
 ];
+// Engines for Text to Image; /api/me says which ones this user can pick.
+const ENGINES={
+  runway:{name:'Runway',model:'Gen-4 Image · 720p'},
+  gemini:{name:'Google Gemini',model:'Nano Banana · 1K'}
+};
 // Both photo modes share the upload, duration and preset steps.
 const isPhotoMode=m=>m==='image'||m==='hd';
 function UploadField({title,sub,file,onChange,accept}){
@@ -32,17 +39,17 @@ function PersonPreview({src,init}){
   },[src,init]);
   return image?<img src={image} alt="Detected person preview" className="facePreview"/>:<div className="facePlaceholder">◉</div>;
 }
-function ProcessingPanel({stage,progress}){
+function ProcessingPanel({stage,progress,noun='video'}){
   const labels={
-    uploading:'Uploading files securely',analyzing:'Finding people in the video',
-    rendering:'AI is creating your video',stitching:'Combining the scenes',
-    saving:'Saving your finished video',pending:'Waiting in the generation queue'
+    uploading:'Uploading files securely',starting:'Sending your description to the AI',analyzing:'Finding people in the video',
+    rendering:`AI is creating your ${noun}`,stitching:'Combining the scenes',
+    saving:`Saving your finished ${noun}`,pending:'Waiting in the generation queue'
   };
   const label=labels[stage]||stage||'Preparing video';
   return <div className="progressPanel" role="status" aria-live="polite">
     <div className="progressOrbit"><span>✦</span><i/></div>
     <strong>{label}</strong>
-    <small>This may take several minutes. The app is still working.</small>
+    <small>{noun==='image'?'This usually takes under a minute.':'This may take several minutes. The app is still working.'}</small>
     <div className="progressTrack"><div className={progress==null?'progressIndeterminate':'progressFill'} style={progress!=null?{width:`${progress}%`}:undefined}/></div>
     {progress!=null?<small>{progress}% complete</small>:<small>Checking the AI service for updates…</small>}
   </div>;
@@ -74,6 +81,7 @@ export default function Home(){
   const [scanBusy,setScanBusy]=useState(false);
   const [swapEnabled,setSwapEnabled]=useState(false);
   const [features,setFeatures]=useState({});
+  const [imagePrompt,setImagePrompt]=useState(''),[engine,setEngine]=useState('runway'),[aspect,setAspect]=useState('portrait');
   const stopRef=useRef(false);
   const api=useCallback(async(path,method='GET',body=null)=>{
     const res=await fetch(path,{method,headers:{'x-telegram-init-data':init,...(body?{'Content-Type':'application/json'}:{})},
@@ -152,8 +160,12 @@ export default function Home(){
     return ()=>{active=false;};
   },[mainFile,mode]);
   const photoMode = isPhotoMode(mode);
-  const visibleModes = MODES.filter(m => m.id !== 'hd' || features.hd);
-  const rawSeconds = photoMode ? seconds : videoSeconds ? Math.ceil(videoSeconds) : 0;
+  const textImage = mode === 'text2img';
+  const engines = (Array.isArray(features.text2img) ? features.text2img : []).filter(id => ENGINES[id]);
+  const safeEngine = engines.includes(engine) ? engine : engines[0];
+  const visibleModes = MODES.filter(m => (m.id !== 'hd' || features.hd) && (m.id !== 'text2img' || engines.length));
+  // text2img is priced per image, one image per job.
+  const rawSeconds = textImage ? 1 : photoMode ? seconds : videoSeconds ? Math.ceil(videoSeconds) : 0;
   // Same limits the server enforces in /api/generate and /api/swap/analyze.
   const [minVideoSeconds,maxVideoSeconds] = mode === 'act' ? [3,30] : [2,10];
   const durationError = !photoMode && mainFile && videoSeconds > 0 &&
@@ -209,6 +221,7 @@ export default function Home(){
     if(mode==='video'&&videoWorkflow==='people')return renderPeople();
     setError('');setJob(null);setJobId('');
     if(!user||!init)return setError('Open inside Telegram and sign in');
+    if(textImage)return generateImage();
     if(!mainFile || (mode==='act'&&!photo))return setError('Select the required media files');
     if(!consent)return setError('Please confirm you have permission to use these files');
     if(cost===null)return setError('Unsupported duration. Image: 5/10s, video: 2–10s, portrait: 3–30s.');
@@ -223,6 +236,22 @@ export default function Home(){
       setJobId(created.id);try{window.localStorage.setItem(JOB_KEY,created.id);}catch{}
       setUser(old=>old?{...old,credits:created.remaining}:old);
       setTab('create');setStep('Video is generating');
+    }catch(ex){setError(ex.message);setStep('');}
+    finally{setBusy(false);}
+  }
+  async function generateImage(){
+    if(imagePrompt.trim().length<4)return setError('Describe the image you want in a few words.');
+    if(!safeEngine)return setError('Image generation is not available right now.');
+    if(!consent)return setError('Please confirm you will not use this to mislead or impersonate anyone.');
+    if(cost===null)return setError('Image pricing is not available yet. Try again shortly.');
+    if(user.credits<cost){setTab('credits');return setError(`You need ${cost} credits — choose a credit pack below.`);}
+    setBusy(true);
+    try{
+      setStep('Sending your description');
+      const created=await api('/api/generate','POST',{mode,prompt:imagePrompt,engine:safeEngine,aspect});
+      setJobId(created.id);try{window.localStorage.setItem(JOB_KEY,created.id);}catch{}
+      setUser(old=>old?{...old,credits:created.remaining}:old);
+      setStep('Image is generating');
     }catch(ex){setError(ex.message);setStep('');}
     finally{setBusy(false);}
   }
@@ -258,13 +287,13 @@ export default function Home(){
     <section className="hero">
       <span className="eyebrow"><i/> CREATE WITHOUT LIMITS</span>
       <h1>Your imagination.<br/><em>In motion.</em></h1>
-      <p>Create cinematic videos from photos, remake clips, or star in your own scene.</p>
+      <p>Create cinematic videos from photos, remake clips, star in your own scene, or draw images from words.</p>
       <div className="heroOrbs"><span>✦</span><span>◈</span><span>✧</span></div>
     </section>
     <div className="segmented"><button className={tab==='create'?'active':''} onClick={()=>setTab('create')} type="button">✦ Create</button><button className={tab==='credits'?'active':''} onClick={()=>setTab('credits')} type="button">✧ Credits</button><button className={tab==='invite'?'active':''} onClick={()=>setTab('invite')} type="button">🎁 Invite</button></div>
     {tab==='create'?<>
       <div className="sectionLabel"><span>01</span> Choose your magic</div>
-      <div className={`modeGrid ${visibleModes.length===4?'four':''}`}>{visibleModes.map(m=><button key={m.id} type="button" aria-pressed={mode===m.id} className={`modeCard ${mode===m.id?'chosen':''}`} onClick={() => selectMode(m.id)}><span className="selectedTick">{mode===m.id?'✓ Selected':'Choose'}</span><span className="modeGlyph">{m.icon}</span><strong>{m.title}</strong><span className="modeSub">{m.subtitle}</span><span className="modeRate">{m.id==='video'?videoWorkflow==='people'?`Multi-face · ${swapRate} credits/sec`:`${rates?.video??'…'} credits/sec`:`${rates?.[m.id] ?? RATE[m.id]} credits/sec`}</span></button>)}</div>
+      <div className={`modeGrid ${visibleModes.length>=4?'many':''}`}>{visibleModes.map(m=><button key={m.id} type="button" aria-pressed={mode===m.id} className={`modeCard ${mode===m.id?'chosen':''}`} onClick={() => selectMode(m.id)}><span className="selectedTick">{mode===m.id?'✓ Selected':'Choose'}</span><span className="modeGlyph">{m.icon}</span><strong>{m.title}</strong><span className="modeSub">{m.subtitle}</span><span className="modeRate">{m.id==='video'?videoWorkflow==='people'?`Multi-face · ${swapRate} credits/sec`:`${rates?.video??'…'} credits/sec`:`${rates?.[m.id] ?? RATE[m.id]} credit${m.id==='text2img'&&(rates?.[m.id]??RATE[m.id])===1?'':'s'}/${m.id==='text2img'?'image':'sec'}`}</span></button>)}</div>
       {mode==='video'&&<div className="workflowTabs" role="group" aria-label="Video Remix type">
         <button type="button" aria-pressed={videoWorkflow==='people'} className={videoWorkflow==='people'?'active':''} onClick={()=>{setVideoWorkflow('people');resetScan();setMainFile(null);setError('')}}>👥 Replace people</button>
         <button type="button" aria-pressed={videoWorkflow==='style'} className={videoWorkflow==='style'?'active':''} onClick={()=>{setVideoWorkflow('style');resetScan();setMainFile(null);setError('')}}>🎨 Change style</button>
@@ -295,6 +324,16 @@ export default function Home(){
         {scanStatus==='SUCCEEDED'&&swapUrl&&<div className="result"><h3>🎬 Your video is ready!</h3><video playsInline controls src={swapUrl}/><a className="download" href={swapUrl} target="_blank" rel="noreferrer">Download your video ↗</a><p>{telegramDelivery==='sent'?'Sent to your Telegram chat!':'The video is ready here. Open the bot and press Start to enable Telegram delivery.'}</p></div>}
         {scanStatus==='FAILED'&&<div className="notice">Analysis or rendering failed. Change the video and try again. Any charged credits should be refunded.</div>}
       </div>:<form onSubmit={generate}>
+        {textImage?<>
+          <div className="sectionLabel"><span>02</span> Describe your image</div>
+          <textarea className="prompt" value={imagePrompt} onChange={e=>setImagePrompt(e.target.value)} maxLength={MAX_IMAGE_PROMPT} placeholder="For example: a cozy coffee shop on a rainy evening, warm lights, cinematic photo…" aria-label="Image description"/>
+          <div className="promptHint">{imagePrompt.length}/{MAX_IMAGE_PROMPT} · Describe the subject, setting, style and lighting.</div>
+          <div className="sectionLabel"><span>03</span> Choose the AI</div>
+          <div className="duration engines" role="group" aria-label="AI engine">{engines.map(id=><button key={id} type="button" aria-pressed={safeEngine===id} className={safeEngine===id?'active':''} onClick={()=>setEngine(id)}><strong>{ENGINES[id].name}</strong><small>{ENGINES[id].model}</small></button>)}</div>
+          <div className="sectionLabel"><span>04</span> Shape</div>
+          <div className="duration" role="group" aria-label="Image shape">{Object.entries(IMAGE_ASPECTS).map(([id,a])=><button key={id} type="button" aria-pressed={aspect===id} className={aspect===id?'active':''} onClick={()=>setAspect(id)}>{a.label} · {a.ratio}</button>)}</div>
+          <div className="notice">Requests showing well-known people or unsafe content may be declined — credits are refunded automatically if that happens.</div>
+        </>:<>
         <div className="sectionLabel"><span>02</span> Add your media</div>
         {mode==='act'&&<><UploadField title="Upload your portrait" sub="Clear front-facing image · JPG, PNG, WebP · up to 10 MB" file={photo} onChange={setPhoto} accept="image/jpeg,image/png,image/webp"/><div className="fieldCaption">Then choose a video whose facial expressions and movements you want to follow.</div></>}
         <UploadField title={photoMode?'Upload a photo':'Upload your video'} sub={photoMode?'JPG, PNG or WebP · up to 10 MB':'MP4 · 2–10s for remix, 3–30s for Me in Video · up to 50 MB'} file={mainFile} onChange={updateVideo} accept={photoMode?'image/jpeg,image/png,image/webp':'video/mp4'}/>
@@ -307,12 +346,13 @@ export default function Home(){
           <details className="advanced"><summary>✎ Optional: add an instruction</summary><textarea className="prompt" value={extraPrompt} onChange={e=>setExtraPrompt(e.target.value)} maxLength={300} placeholder="For example: gentle wind, keep colors natural…"/><small>Up to 300 characters. Optional.</small></details>
           <details className="preview"><summary>See AI-generated prompt</summary><p>{previewPrompt}</p></details>
         </>:<div className="notice"><strong>No prompt required for Me in Video.</strong><br/>Upload a clear portrait and an MP4 movement video with one visible person. Act-Two transfers gestures and expressions; it does not guarantee exact face replacement or preservation of the original background.</div>}
-        <label className="consent"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)} required/><span>I own these files or have permission from everyone depicted. I won’t impersonate someone without consent.</span></label>
+        </>}
+        <label className="consent"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)} required/><span>{textImage?'I won’t use generated images to mislead people or to impersonate anyone.':'I own these files or have permission from everyone depicted. I won’t impersonate someone without consent.'}</span></label>
         <div className="checkout"><div><small>Estimated price</small><b>{cost===null?'—':`${cost} credits`}</b></div><div><small>Your balance</small><b>{user?.credits??'—'} credits</b></div></div>
-        <button type="submit" className="cta" disabled={!init||!user||busy||cost===null}>{busy?step:`✦ Generate video · ${cost??'—'} credits`}</button>
+        <button type="submit" className="cta" disabled={!init||!user||busy||cost===null}>{busy?step:`✦ Generate ${textImage?'image':'video'} · ${cost??'—'} credit${cost===1?'':'s'}`}</button>
       </form>}
-      {((busy||job&& !['SUCCEEDED','FAILED'].includes(job.status))&& !(mode==='video'&&videoWorkflow==='people'))&&<ProcessingPanel stage={busy?'uploading':job?.status==='SAVING'?'saving':'rendering'} progress={null}/>}
-      {job&&<div className="result"><h3>{job.status==='SUCCEEDED'?'Your video is ready ✦':'Generation · '+job.status}</h3><p>{job.message||'You can leave this screen open while we create your video.'}</p>{job.status==='SUCCEEDED'&&job.url&&<><video controls playsInline src={job.url}/><a className="download" href={job.url} target="_blank" rel="noreferrer">Download video ↗</a></>}{job.status==='FAILED'&&<p>Credits for failed generations are refunded automatically.</p>}</div>}
+      {((busy||job&& !['SUCCEEDED','FAILED'].includes(job.status))&& !(mode==='video'&&videoWorkflow==='people'))&&<ProcessingPanel noun={job?.media||(textImage?'image':'video')} stage={busy?(textImage?'starting':'uploading'):job?.status==='SAVING'?'saving':'rendering'} progress={null}/>}
+      {job&&<div className="result"><h3>{job.status==='SUCCEEDED'?`Your ${job.media==='image'?'image':'video'} is ready ✦`:'Generation · '+job.status}</h3><p>{job.message||`You can leave this screen open while we create your ${job.media==='image'?'image':'video'}.`}</p>{job.status==='SUCCEEDED'&&job.url&&(job.media==='image'?<><img className="resultImage" src={job.url} alt="Your generated image"/><a className="download" href={job.url} target="_blank" rel="noreferrer">Open full size to save ↗</a></>:<><video controls playsInline src={job.url}/><a className="download" href={job.url} target="_blank" rel="noreferrer">Download video ↗</a></>)}{job.status==='FAILED'&&<p>Credits for failed generations are refunded automatically.</p>}</div>}
     </>:tab==='credits'?<><div className="sectionLabel"><span>✦</span> Credit packs</div><p className="muted">Create more videos with Telegram Stars. You’ll receive credits after confirmed payment.</p><div className="packs">{Object.entries(PACKS).map(([id,p])=><div className={`pack ${id==='creator'?'recommended':''}`} key={id}><div><span className="packName">{p.label}</span><strong>{p.credits} <small>credits</small></strong></div><button type="button" onClick={()=>buy(id)} disabled={!!payBusy}>{payBusy===id?'Opening…':`${p.stars} ⭐ Stars`}</button></div>)}</div><div className="notice">Payments are processed in Telegram Stars. Credits are added only after Telegram confirms your payment. Prices may change after real-world cost tests.</div></>:<section className="inviteBox"><span className="inviteEmoji">🎁</span><h2>Invite friends. Earn credits.</h2><p>Get <strong>2 credits</strong> when a new friend opens VisionAI for the first time through your link.</p><div className="inviteStats"><div><strong>{referral?.invited??'—'}</strong><small>Friends invited</small></div><div><strong>{referral?.earned??'—'}</strong><small>Credits earned</small></div></div>{referral?.url?<><div className="inviteLink">{referral.url}</div><div className="inviteActions"><button type="button" onClick={shareInvite}>Share in Telegram</button><button type="button" onClick={copyInvite}>Copy link</button></div></>:<p className="notice">Set TELEGRAM_BOT_USERNAME and TELEGRAM_APP_SHORT_NAME in Vercel to activate the invite link.</p>}{shareState&&<p className="muted">{shareState}</p>}<p className="inviteFine">Only new, verified Telegram users count. No self-referrals. Max 10/day and 100 total. Invite credits have no cash value.</p></section>}
     {error&&<div className="error">⚠ {error}</div>}
     <footer>VisionAI · AI-generated videos · Use media you have permission to edit</footer>

@@ -7,7 +7,7 @@ Shuningdek Telegram Stars to'lovlari, referral kreditlari va ko'p kishilik video
 ## 1. Hisoblar
 1. @BotFather bot yarating va tokenni oling, Telegram'da Mini App uchun /newapp.
 2. Neon'da loyiha oching; SQL Editor'da migratsiyalarni **shu tartibda, bir martadan** ishga tushiring:
-   `sql/schema.sql` → `sql/upgrade_v2.sql` → `sql/upgrade_v2_1.sql` → `sql/upgrade_v2_2.sql` → `sql/upgrade_viggle.sql` → `sql/upgrade_rate_limits.sql` → `sql/upgrade_omni.sql`.
+   `sql/schema.sql` → `sql/upgrade_v2.sql` → `sql/upgrade_v2_1.sql` → `sql/upgrade_v2_2.sql` → `sql/upgrade_viggle.sql` → `sql/upgrade_rate_limits.sql` → `sql/upgrade_omni.sql` → `sql/upgrade_text_image.sql`.
    Faqat `schema.sql` yetarli emas: `credit_rates`, referral va `swap_projects` jadvallari keyingi fayllarda.
 3. Cloudflare R2'da `visionai-media` bucket yarating. R2 API tokens orqali object read/write kalitlarini yarating.
 4. Runway Dev dashboard'dan API key va test balans oling. Oddiy Runway veb obunasi har doim API balansi degani emas.
@@ -24,6 +24,12 @@ Production Vercel → Project → Settings → Environment Variables'ga ham shu 
 2. Vercel'ga `GEMINI_API_KEY` (aistudio.google.com) va `OMNI_ENABLED=<sizning Telegram ID>` qo'shing — karta faqat sizga ko'rinadi.
 3. Sinovdan keyin `OMNI_ENABLED=all`. O'chirish: qiymatni bo'shating.
 Video tayyor bo'lgach (yoki xato bo'lsa) Google'dagi interaction (rasm + video) avtomatik o'chiriladi. Taniqli shaxslar va bolalar rasmlarini Google rad etishi mumkin; kredit qaytariladi.
+
+### Text to Image (prompt → rasm, Runway yoki Gemini)
+Foydalanuvchi rasm tavsifini yozadi, AI'ni tanlaydi (Runway `gen4_image` 720p yoki Google Gemini `gemini-nano-banana-2.1` 1K) va shaklni belgilaydi (9:16, 1:1, 16:9). Narx: 1 kredit/rasm (Runway ~$0.05, Gemini ~$0.034). Narxni `credit_rates` jadvalidagi `text2img` qatori orqali o'zgartirasiz.
+1. Neon'da `sql/upgrade_text_image.sql` ni ishga tushiring (`upgrade_omni.sql` dan keyin). Ishga tushirmasangiz, rasm yaratish "Credit rate unavailable" xatosini beradi.
+2. Runway hamisha mavjud. Gemini tanlovi `GEMINI_API_KEY` bo'lsa hamma uchun ko'rinadi (`OMNI_ENABLED` ga bog'liq emas).
+Rasm R2'ga `results/<user>/<job>.png|jpg|webp` bo'lib saqlanadi; turi fayl baytlaridan aniqlanadi.
 
 ## 3. R2 CORS
 R2 → Bucket → Settings → CORS Policy:
@@ -80,8 +86,8 @@ node --env-file=.env.local scripts/set-webhook.mjs https://YOUR_PROJECT.vercel.a
 ## 7. API xulosa
 - `GET /api/me`: Telegram `initData` ni tekshirib user ochadi / kreditni qaytaradi.
 - `POST /api/upload`: user'ga tegishli fayl uchun R2 signed PUT URL.
-- `POST /api/generate`: R2 HEAD va ownership tekshiruvi, Neon kredit debiti, Runway task start.
-- `GET /api/status/:id`: task statusini Runway'dan so'raydi; tayyor video chiqsa R2'ga ko'chiradi va signed GET URL beradi.
+- `POST /api/generate`: R2 HEAD va ownership tekshiruvi, Neon kredit debiti, provayder task start. `text2img` uchun `{mode:'text2img', prompt, engine:'runway'|'gemini', aspect:'portrait'|'square'|'landscape'}`.
+- `GET /api/status/:id`: task statusini provayderdan so'raydi; tayyor video yoki rasmni R2'ga ko'chiradi va signed GET URL beradi (`media: 'video'|'image'`).
 
 Frontend `x-telegram-init-data` header'da `window.Telegram.WebApp.initData` yuboradi, server HMAC va `auth_date`ni tekshiradi.
 

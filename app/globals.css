@@ -52,4 +52,8 @@
 @media(prefers-reduced-motion:reduce){.progressOrbit,.progressOrbit>span,.progressIndeterminate{animation:none}}
 
 /* Four mode cards (HD enabled): two per row so each card keeps room for its text */
-.modeGrid.four{grid-template-columns:repeat(2,1fr)}.modeGrid.four .modeCard{min-height:132px}
+.modeGrid.many{grid-template-columns:repeat(2,1fr)}.modeGrid.many .modeCard{min-height:132px}
+/* An odd card out (e.g. 5 modes) takes the whole last row. */
+.modeGrid.many .modeCard:last-child:nth-child(odd){grid-column:1/-1;min-height:112px}
+.duration.engines button{display:flex;flex-direction:column;gap:4px;text-align:center}.duration.engines small{font-size:10px;font-weight:600;color:var(--muted)}
+.result .resultImage{display:block;width:100%;border-radius:12px;background:#0d1020}
