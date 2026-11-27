@@ -1,15 +1,19 @@
 import { randomUUID } from 'node:crypto';
 import { auth, jsonError } from '../../../lib/auth.js';
 import { signedUpload, rule } from '../../../lib/r2.js';
+import { badRequest, readJson } from '../../../lib/errors.js';
+import { db } from '../../../lib/db.js';
+import { enforceRateLimit } from '../../../lib/rate-limit.js';
 export const runtime = 'nodejs';
 export async function POST(req) {
   try {
     const user=auth(req);
-    const {type,size,mode}=await req.json();
+    const {type,size,mode}=await readJson(req);
     const config=rule(type);
-    if(!config||(['act','swap'].includes(mode) ? !['image','video'].includes(config.mode) : config.mode!==mode) || !Number.isSafeInteger(size) || size<=0 || size>config.max)
-      throw new Error('Unsupported media type or file size');
+    if(!config||(['act','swap'].includes(mode) ? !['image','video'].includes(config.mode) : config.mode!==(mode==='hd'?'image':mode)) || !Number.isSafeInteger(size) || size<=0 || size>config.max)
+      throw badRequest('Unsupported media type or file size');
+    await enforceRateLimit(db(), 'upload', user.id);
     const key=`uploads/${user.id}/${randomUUID()}.${config.ext}`;
-    return Response.json({key,uploadUrl:await signedUpload(key,type)});
+    return Response.json({key,uploadUrl:await signedUpload(key,type,size)});
   } catch(e){return jsonError(e);}
 }

@@ -1,120 +1,41 @@
-// import { randomUUID } from 'node:crypto';
-// import { auth, jsonError } from '../../../lib/auth.js';
-// import { db, upsertUser } from '../../../lib/db.js';
-// import { verifySource, verifiedVideoSeconds } from '../../../lib/r2.js';
-// import { createVideo } from '../../../lib/runway.js';
-// import { billedPrice } from '../../../lib/pricing-db.js';
-// import { buildPrompt } from '../../../lib/prompt-presets.js';
-// export const runtime = 'nodejs';
-// export const maxDuration = 60;
-
-// export async function POST(req) {
-//   let jobId = null, charged = false, user = null, cost = 0;
-//   try {
-//     user = auth(req);
-//     const { mode, key, videoKey, presetId, extraPrompt, seconds: requestedSeconds } = await req.json();
-//     const prompt = mode === 'act' ? '' : buildPrompt(mode, presetId, extraPrompt || '');
-//     if (!['image', 'video', 'act'].includes(mode)) throw Error('Unsupported mode');
-//     if (mode !== 'act' && (typeof prompt !== 'string' || prompt.trim().length < 4 || prompt.length > 1000)) throw Error('Invalid prompt');
-//     if (mode === 'act' && !videoKey) throw Error('Portrait and motion video are required');
-//     let sourceUrl, performanceUri = null, seconds;
-//     if (mode === 'image') {
-//       seconds = Number(requestedSeconds);
-//       sourceUrl = await verifySource(key, user.id, 'image');
-
-//     } else if (mode === 'video') {
-
-//       // Video Remix / Change style: 2–10 soniya
-//       seconds = await verifiedVideoSeconds(
-//         key,
-//         user.id,
-//         { minSeconds: 2, maxSeconds: 10 }
-//       );
-
-//       sourceUrl = await verifySource(
-//         key,
-//         user.id,
-//         'video'
-//       );
-
-//     } else {
-
-//       // Me in Video / One person: 3–30 soniya
-//       sourceUrl = await verifySource(
-//         key,
-//         user.id,
-//         'image'
-//       );
-
-//       seconds = await verifiedVideoSeconds(
-//         videoKey,
-//         user.id,
-//         { minSeconds: 3, maxSeconds: 30 }
-//       );
-
-//       performanceUri = await verifySource(
-//         videoKey,
-//         user.id,
-//         'video'
-//       );
-//     }
-
-
-//     cost = await billedPrice(mode, seconds);
-//     const sql = db();
-//     await upsertUser(user);
-//     const debit = await sql`UPDATE users SET credits=credits-${cost}
-//       WHERE id=${user.id} AND credits>=${cost} RETURNING credits`;
-//     if (!debit.length) throw Error(`Not enough credits (need ${cost})`);
-//     charged = true;
-//     jobId = randomUUID();
-//     await sql`INSERT INTO jobs(id,user_id,source_key,secondary_source_key,mode,prompt,duration_seconds,cost,status)
-//       VALUES(${jobId},${user.id},${key},${videoKey || null},${mode},${mode === 'act' ? 'Performance transfer' : prompt.trim()},${seconds},${cost},'STARTING')`;
-//     const task = await createVideo(mode, sourceUrl, mode === 'act' ? '' : prompt.trim(), { seconds, performanceUri });
-//     if (!task?.id) throw Error('Runway did not return a task ID');
-//     await sql`UPDATE jobs SET runway_id=${task.id},status='PENDING' WHERE id=${jobId}`;
-//     return Response.json({ id: jobId, status: 'PENDING', remaining: debit[0].credits, cost, seconds });
-//   } catch (e) {
-//     if (charged && user) {
-//       try {
-//         const sql = db();
-//         if (jobId) {
-//           const rows = await sql`UPDATE jobs SET status='FAILED',error_message='Task could not start'
-//             WHERE id=${jobId} AND status='STARTING' RETURNING id`;
-//           if (rows.length) await sql`UPDATE users SET credits=credits+${cost} WHERE id=${user.id}`;
-//         } else await sql`UPDATE users SET credits=credits+${cost} WHERE id=${user.id}`;
-//       } catch (x) { console.error('Refund needs investigation:', x); }
-//     }
-//     return jsonError(e);
-//   }
-// }
-
-
-
 import { randomUUID } from 'node:crypto';
 import { auth, jsonError } from '../../../lib/auth.js';
 import { db, upsertUser } from '../../../lib/db.js';
 import { verifySource, verifiedVideoSeconds } from '../../../lib/r2.js';
-import { createVideo } from '../../../lib/runway.js';
-// import { createViggleVideo } from '../../../lib/viggle.js';
-import { createViggleVideo } from '../../../lib/viggle.js';
+import { chooseProvider, startTask } from '../../../lib/providers/index.js';
 import { billedPrice } from '../../../lib/pricing-db.js';
 import { buildPrompt } from '../../../lib/prompt-presets.js';
+import { imageAspect, imagePrompt } from '../../../lib/text-image.js';
+import { badRequest, forbidden, paymentRequired, readJson } from '../../../lib/errors.js';
+import { debitAndCreateJob, failAndRefundJob } from '../../../lib/billing.js';
+import { enforceRateLimit } from '../../../lib/rate-limit.js';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+const MODES = ['image', 'video', 'act', 'hd', 'text2img'];
+
 export async function POST(req) {
-  let jobId = null, charged = false, user = null, cost = 0;
+  let jobId = null;
   try {
-    user = auth(req);
-    const { mode, key, videoKey, presetId, extraPrompt, seconds: requestedSeconds } = await req.json();
-    const provider = mode === 'act' && process.env.VIDEO_PROVIDER === 'viggle' ? 'viggle' : 'runway';
-    const prompt = mode === 'act' ? '' : buildPrompt(mode, presetId, extraPrompt || '');
-    if (!['image', 'video', 'act'].includes(mode)) throw Error('Unsupported mode');
-    if (mode !== 'act' && (typeof prompt !== 'string' || prompt.trim().length < 4 || prompt.length > 1000)) throw Error('Invalid prompt');
-    if (mode === 'act' && !videoKey) throw Error('Portrait and motion video are required');
-    let sourceUrl, performanceUri = null, seconds;
-    if (mode === 'image') {
+    const user = auth(req);
+    const body = await readJson(req);
+    const { mode, key, videoKey, presetId, extraPrompt, seconds: requestedSeconds, engine } = body;
+    if (!MODES.includes(mode)) throw badRequest('Unsupported mode');
+    if (engine != null && typeof engine !== 'string') throw badRequest('Invalid AI engine');
+    const provider = chooseProvider(mode, user.id, engine);
+    if (!provider) throw forbidden(engine ? 'This AI engine is not available' : 'This mode is not available yet');
+    const textImage = mode === 'text2img';
+    // text2img: the user's own description; other modes: a preset plus an optional extra line.
+    const prompt = textImage ? imagePrompt(body.prompt) : mode === 'act' ? '' : buildPrompt(mode, presetId, extraPrompt || '');
+    const aspect = textImage ? imageAspect(body.aspect ?? 'portrait') : undefined;
+    if (mode !== 'act' && (typeof prompt !== 'string' || prompt.trim().length < 4 || prompt.length > 1000)) throw badRequest('Invalid prompt');
+    if (mode === 'act' && !videoKey) throw badRequest('Portrait and motion video are required');
+    // After cheap validation, before the video download and the provider call.
+    await enforceRateLimit(db(), 'generate', user.id);
+    let sourceUrl = null, performanceUri = null, seconds = null;
+    if (textImage) {
+      // Nothing to upload or verify: the prompt is the whole input.
+    } else if (mode === 'image' || mode === 'hd') {
       seconds = Number(requestedSeconds);
       sourceUrl = await verifySource(key, user.id, 'image');
     } else if (mode === 'video') {
@@ -125,32 +46,29 @@ export async function POST(req) {
       seconds = await verifiedVideoSeconds(videoKey, user.id, { minSeconds: 3, maxSeconds: 30 });
       performanceUri = await verifySource(videoKey, user.id, 'video');
     }
-    cost = await billedPrice(mode, seconds);
+    // Images are priced per image (one per job); videos per second.
+    const cost = await billedPrice(mode, textImage ? 1 : seconds);
     const sql = db();
     await upsertUser(user);
-    const debit = await sql`UPDATE users SET credits=credits-${cost}
-      WHERE id=${user.id} AND credits>=${cost} RETURNING credits`;
-    if (!debit.length) throw Error(`Not enough credits (need ${cost})`);
-    charged = true;
-    jobId = randomUUID();
-    await sql`INSERT INTO jobs(id,user_id,source_key,secondary_source_key,mode,prompt,duration_seconds,cost,status,provider)
-      VALUES(${jobId},${user.id},${key},${videoKey || null},${mode},${mode === 'act' ? 'Performance transfer' : prompt.trim()},${seconds},${cost},'STARTING',${provider})`;
-    const task = provider === 'viggle'
-      ? await createViggleVideo(sourceUrl, performanceUri)
-      : await createVideo(mode, sourceUrl, mode === 'act' ? '' : prompt.trim(), { seconds, performanceUri });
-    if (!task?.id) throw Error(`${provider} did not return a task ID`);
-    await sql`UPDATE jobs SET runway_id=${task.id},status='PENDING' WHERE id=${jobId}`;
-    return Response.json({ id: jobId, status: 'PENDING', remaining: debit[0].credits, cost, seconds });
+    const id = randomUUID();
+    // Debit + job row in one statement: a failed insert can no longer eat credits.
+    const remaining = await debitAndCreateJob(sql, {
+      id, userId: user.id, sourceKey: textImage ? null : key, secondaryKey: videoKey || null, mode,
+      prompt: mode === 'act' ? 'Performance transfer' : prompt.trim(), seconds, cost, provider,
+    });
+    if (remaining === null) throw paymentRequired(`Not enough credits (need ${cost})`);
+    jobId = id;
+    const taskId = await startTask(provider, {
+      mode, sourceUrl, performanceUrl: performanceUri, prompt: mode === 'act' ? '' : prompt.trim(), seconds, aspect,
+    });
+    // runway_id holds the task ID of whichever provider runs the job.
+    await sql`UPDATE jobs SET runway_id=${taskId},status='PENDING' WHERE id=${jobId}`;
+    return Response.json({ id: jobId, status: 'PENDING', remaining, cost, seconds, provider });
   } catch (e) {
-    if (charged && user) {
-      try {
-        const sql = db();
-        if (jobId) {
-          const rows = await sql`UPDATE jobs SET status='FAILED',error_message='Task could not start'
-            WHERE id=${jobId} AND status='STARTING' RETURNING id`;
-          if (rows.length) await sql`UPDATE users SET credits=credits+${cost} WHERE id=${user.id}`;
-        } else await sql`UPDATE users SET credits=credits+${cost} WHERE id=${user.id}`;
-      } catch (x) { console.error('Refund needs investigation:', x); }
+    // jobId is set only once the user has been charged for this job.
+    if (jobId) {
+      try { await failAndRefundJob(db(), jobId, 'Task could not start'); }
+      catch (x) { console.error(`Refund for job ${jobId} needs investigation:`, x); }
     }
     return jsonError(e);
   }

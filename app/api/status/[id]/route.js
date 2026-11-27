@@ -1,277 +1,113 @@
-// import { auth, jsonError } from '../../../../lib/auth.js';
-// import { db } from '../../../../lib/db.js';
-// import { runway } from '../../../../lib/runway.js';
-// import { getViggleVideo } from '../../../../lib/viggle.js';
-// import { saveResult, signedDownload } from '../../../../lib/r2.js';
-// export const runtime = 'nodejs';
-// export const maxDuration = 120;
-
-// export async function GET(req, context) {
-//   try {
-//     const user = auth(req);
-//     const { id } = await context.params;
-//     if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error('Invalid job ID');
-//     const sql = db();
-//     const rows = await sql`SELECT * FROM jobs WHERE id=${id} AND user_id=${user.id}`;
-//     if (!rows.length) return Response.json({ error: 'Job not found' }, { status: 404 });
-//     const job = rows[0];
-//     if (job.output_key) return Response.json({ status: 'SUCCEEDED', url: await signedDownload(job.output_key, 3600) });
-//     if (job.status === 'FAILED') return Response.json({ status: 'FAILED', message: job.error_message || 'Video failed' });
-//     if (!job.runway_id) return Response.json({ status: 'STARTING' });
-//     // const task = await runway(`/tasks/${encodeURIComponent(job.runway_id)}`);
-//     const provider = job.provider || 'runway';
-//     if (!videoUrl) {
-//       return Response.json({
-//         status: 'RUNNING',
-//         message: 'Waiting for output'
-//       });
-//     }
-//     const task = provider === 'viggle'
-//       ? await getViggleVideo(job.runway_id)
-//       : await runway(
-//         `/tasks/${encodeURIComponent(job.runway_id)}`
-//       );
-//     if (['FAILED', 'CANCELED'].includes(task.status)) {
-//       const changed = await sql`UPDATE jobs SET status='FAILED',error_message='Runway generation failed'
-//         WHERE id=${id} AND status NOT IN ('FAILED','SUCCEEDED') RETURNING cost`;
-//       if (changed.length) await sql`UPDATE users SET credits=credits+${changed[0].cost} WHERE id=${user.id}`;
-//       return Response.json({ status: 'FAILED', message: 'Generation failed; credit refunded' });
-//     }
-
-//     // if (task.status === 'SUCCEEDED') {
-//     //   const source = task.output?.[0];
-//     const state = String(task.status || '').toUpperCase();
-
-//     if (state === 'SUCCEEDED' || state === 'READY') {
-//       const videoUrl =
-//         provider === 'viggle'
-//           ? task.video_url
-//           : task.output?.[0];
-//       if (!videoUrl) return Response.json({ status: 'RUNNING', message: 'Waiting for output' });
-//       const key = `results/${user.id}/${id}.mp4`;
-//       try {
-//         await saveResult(videoUrl, key);
-//         await sql`UPDATE jobs SET status='SUCCEEDED',output_key=${key} WHERE id=${id}`;
-//         return Response.json({ status: 'SUCCEEDED', url: await signedDownload(key, 3600) });
-//       } catch (error) {
-//         console.error('R2 result persistence failed, will retry:', error);
-//         return Response.json({ status: 'SAVING', message: 'Video ready; saving result to storage' });
-//       }
-//     }
-//     return Response.json({ status: task.status || 'PENDING' });
-//   } catch (e) { return jsonError(e); }
-// }
-
-
 import { auth, jsonError } from '../../../../lib/auth.js';
 import { db } from '../../../../lib/db.js';
-import { runway } from '../../../../lib/runway.js';
-import { getViggleVideo } from '../../../../lib/viggle.js';
-import { saveResult, signedDownload } from '../../../../lib/r2.js';
+import { DEFAULT_PROVIDER, cleanupTask, pollTask } from '../../../../lib/providers/index.js';
+import { downloadResult, imageKind, saveResult, saveResultBytes, signedDownload } from '../../../../lib/r2.js';
+import { badRequest, isTransient } from '../../../../lib/errors.js';
+import { failAndRefundJob, refundStuckJob } from '../../../../lib/billing.js';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
+
+const MAX_IMAGE_RESULT_BYTES = 20 * 1024 * 1024;
 
 export async function GET(req, context) {
   try {
     // 1. Telegram foydalanuvchisini tekshirish
     const user = auth(req);
     const { id } = await context.params;
-
-    if (!/^[0-9a-f-]{36}$/i.test(id)) {
-      throw new Error('Invalid job ID');
-    }
+    if (!/^[0-9a-f-]{36}$/i.test(id)) throw badRequest('Invalid job ID');
 
     const sql = db();
 
     // 2. Faqat shu foydalanuvchining videosini olish
-    const rows = await sql`
-      SELECT *
-      FROM jobs
-      WHERE id = ${id}
-        AND user_id = ${user.id}
-    `;
-
-    if (!rows.length) {
-      return Response.json(
-        { error: 'Job not found' },
-        { status: 404 }
-      );
-    }
-
+    const rows = await sql`SELECT * FROM jobs WHERE id = ${id} AND user_id = ${user.id}`;
+    if (!rows.length) return Response.json({ error: 'Job not found' }, { status: 404 });
     const job = rows[0];
+    // What the job makes; the page uses it to show an <img> or a <video>.
+    const media = job.mode === 'text2img' ? 'image' : 'video';
+    const reply = body => Response.json({ ...body, media });
 
-    // 3. Video avval R2 ga saqlangan bo'lsa
+    // 3. Natija avval R2 ga saqlangan bo'lsa
     if (job.output_key) {
-      const url = await signedDownload(
-        job.output_key,
-        3600
-      );
-
-      return Response.json({
-        status: 'SUCCEEDED',
-        url
-      });
+      return reply({ status: 'SUCCEEDED', url: await signedDownload(job.output_key, 3600) });
     }
 
     // 4. Generatsiya avval muvaffaqiyatsiz tugagan bo'lsa
     if (job.status === 'FAILED') {
-      return Response.json({
-        status: 'FAILED',
-        message: job.error_message || 'Video generation failed'
-      });
+      return reply({ status: 'FAILED', message: job.error_message || `The ${media} could not be created` });
     }
 
     // 5. AI task ID hali olinmagan bo'lsa
     if (!job.runway_id) {
-      return Response.json({
-        status: 'STARTING',
-        message: 'Starting video generation...'
-      });
+      // The start request died before saving the provider task: give credits back.
+      if (await refundStuckJob(sql, id)) {
+        return reply({ status: 'FAILED', message: 'Generation could not start. Credits refunded.' });
+      }
+      return reply({ status: 'STARTING', message: `Starting ${media} generation...` });
     }
 
-    // 6. Qaysi AI ishlatilayotganini aniqlash
-    const provider = job.provider || 'runway';
-
+    // 6. Ishni boshlagan provayderdan so'raymiz (runway_id = provayder task ID)
+    const provider = job.provider || DEFAULT_PROVIDER;
     let task;
-
     try {
-      if (provider === 'viggle') {
-        task = await getViggleVideo(job.runway_id);
-      } else {
-        task = await runway(
-          `/tasks/${encodeURIComponent(job.runway_id)}`
-        );
-      }
+      task = await pollTask(provider, job.runway_id);
     } catch (error) {
-      // Viggle vaqtinchalik 5xx yoki 429 qaytarsa,
-      // eski render ishini saqlaymiz.
-      const temporaryViggleError =
-        provider === 'viggle' &&
-        /^Viggle (?:429|5\d{2}):/.test(
-          String(error.message || '')
-        );
-
-      if (temporaryViggleError) {
-        console.warn(
-          '[Viggle] Temporary status error:',
-          error.message
-        );
-
-        return Response.json({
-          status: 'RUNNING',
-          message:
-            'Viggle is temporarily unavailable. ' +
-            'Checking your existing video again...'
-        });
+      // Provayder vaqtinchalik 429/5xx yoki timeout qaytarsa,
+      // ish davom etadi — keyingi so'rovda yana tekshiramiz.
+      if (isTransient(error)) {
+        console.warn(`[${provider}] Temporary status error:`, error.cause ?? error.message);
+        return reply({ status: 'RUNNING', message: `The AI service is busy. Checking your ${media} again...` });
       }
-
       throw error;
     }
 
-    // 7. AI statusini bir xil formatga o'tkazish
-    const state = String(
-      task?.status || 'PENDING'
-    ).toUpperCase();
-
-    // 8. AI haqiqatan FAILED/CANCELLED qaytarsa
-    if (
-      ['FAILED', 'CANCELED', 'CANCELLED'].includes(state)
-    ) {
-      // Bir ish uchun refund faqat bir marta
-      const changed = await sql`
-        UPDATE jobs
-        SET
-          status = 'FAILED',
-          error_message = ${provider + ' generation failed'}
-        WHERE id = ${id}
-          AND status NOT IN ('FAILED', 'SUCCEEDED')
-        RETURNING cost
-      `;
-
-      if (changed.length) {
-        await sql`
-          UPDATE users
-          SET credits = credits + ${changed[0].cost}
-          WHERE id = ${user.id}
-        `;
-      }
-
-      return Response.json({
-        status: 'FAILED',
-        message: 'Generation failed. Credits refunded.'
-      });
+    // 7. AI haqiqatan FAILED/CANCELLED qaytarsa: refund faqat bir marta (atomik)
+    if (task.state === 'FAILED') {
+      await failAndRefundJob(sql, id, `${provider} generation failed`);
+      await cleanupTask(provider, job.runway_id);
+      return reply({ status: 'FAILED', message: 'Generation failed. Credits refunded.' });
     }
 
-    // 9. AI video tayyor bo'lganda
-    if (state === 'READY' || state === 'SUCCEEDED') {
-
-      // Viggle: video_url
-      // Runway: output[0]
-      const videoUrl = provider === 'viggle'
-        ? task.video_url
-        : task.output?.[0];
-
-      // Link hali kelmagan bo'lsa,
-      // keyingi tekshiruvni kutamiz.
-      if (
-        typeof videoUrl !== 'string' ||
-        !videoUrl.startsWith('https://')
-      ) {
-        return Response.json({
-          status: 'RUNNING',
-          message: 'Video is ready. Waiting for download URL...'
-        });
-      }
-
-      const resultKey = `results/${user.id}/${id}.mp4`;
-
-      try {
-        // 10. Tayyor videoni Cloudflare R2 ga saqlash
-        await saveResult(videoUrl, resultKey);
-
-        // 11. Neon bazasida SUCCEEDED qilish
-        await sql`
-          UPDATE jobs
-          SET
-            status = 'SUCCEEDED',
-            output_key = ${resultKey}
-          WHERE id = ${id}
-        `;
-
-        // 12. Mini App uchun tayyor video havolasi
-        const downloadUrl = await signedDownload(
-          resultKey,
-          3600
-        );
-
-        return Response.json({
-          status: 'SUCCEEDED',
-          url: downloadUrl
-        });
-
-      } catch (error) {
-        console.error(
-          '[VisionAI] Result saving failed:',
-          error
-        );
-
-        // Video qaytadan generatsiya qilinmaydi.
-        // Keyingi status so'rovida saqlash qayta uriniladi.
-        return Response.json({
-          status: 'SAVING',
-          message:
-            'Video is ready. Saving to storage...'
-        });
-      }
+    // 8. Natija hali generatsiya qilinmoqda
+    if (task.state !== 'SUCCEEDED') {
+      return reply({ status: task.state, message: `AI is creating your ${media}...` });
     }
 
-    // 13. Video hali generatsiya qilinmoqda
-    return Response.json({
-      status: state,
-      message: 'AI is creating your video...'
-    });
+    // 9. Tayyor, lekin link hali kelmagan bo'lsa, keyingi tekshiruvni kutamiz
+    if (!task.outputUrl && !task.outputBytes) {
+      return reply({ status: 'RUNNING', message: `Your ${media} is ready. Waiting for download URL...` });
+    }
 
+    try {
+      // 10. Tayyor natijani Cloudflare R2 ga saqlash va Neon'da SUCCEEDED qilish
+      let resultKey;
+      if (media === 'image') {
+        const bytes = task.outputBytes || await downloadResult(task.outputUrl, MAX_IMAGE_RESULT_BYTES);
+        // The file type comes from the bytes, so the stored name and type are always right.
+        const kind = imageKind(bytes);
+        if (!kind) {
+          await failAndRefundJob(sql, id, `${provider} returned an unreadable image`);
+          await cleanupTask(provider, job.runway_id);
+          return reply({ status: 'FAILED', message: 'Generation failed. Credits refunded.' });
+        }
+        resultKey = `results/${user.id}/${id}.${kind.ext}`;
+        await saveResultBytes(bytes, resultKey, kind.type);
+      } else {
+        resultKey = `results/${user.id}/${id}.mp4`;
+        if (task.outputBytes) await saveResultBytes(task.outputBytes, resultKey);
+        else await saveResult(task.outputUrl, resultKey);
+      }
+      await sql`UPDATE jobs SET status = 'SUCCEEDED', output_key = ${resultKey}
+        WHERE id = ${id} AND status <> 'FAILED'`;
+      // Saved on our side: the provider's copy (inputs + output) is no longer needed.
+      await cleanupTask(provider, job.runway_id);
+      return reply({ status: 'SUCCEEDED', url: await signedDownload(resultKey, 3600) });
+    } catch (error) {
+      // Natija qaytadan generatsiya qilinmaydi.
+      // Keyingi status so'rovida saqlash qayta uriniladi.
+      console.error('[VisionAI] Result saving failed:', error);
+      return reply({ status: 'SAVING', message: `Your ${media} is ready. Saving to storage...` });
+    }
   } catch (error) {
     return jsonError(error);
   }

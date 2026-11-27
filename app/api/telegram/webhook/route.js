@@ -37,7 +37,7 @@ export async function POST(req){
       if(pay.currency!=='XTR'||!sender||!charge||!pay.invoice_payload)return Response.json({ok:true});
       // Single atomic statement, safe against duplicated Telegram webhooks.
       // Invoice amount and sender must match the stored order exactly.
-      await sql`
+      const credited=await sql`
         WITH inserted AS (
           INSERT INTO star_payments(charge_id,order_id,user_id,stars)
           SELECT ${charge},o.id,o.user_id,o.stars FROM topup_orders o
@@ -52,7 +52,15 @@ export async function POST(req){
         )
         UPDATE users SET credits=users.credits+paid.credits
         FROM paid WHERE users.id=paid.user_id
+        RETURNING users.id
       `;
+      if(!credited.length){
+        // A duplicate webhook is expected; a paid charge that matched no order means
+        // the user paid Stars and got nothing, so it must be visible for a manual fix.
+        const seen=await sql`SELECT 1 FROM star_payments WHERE charge_id=${charge}`;
+        if(!seen.length)console.error('[Telegram Stars webhook] PAID BUT NOT CREDITED - review manually',
+          {charge,order:pay.invoice_payload,user:sender,stars:pay.total_amount});
+      }
       return Response.json({ok:true});
     }
     return Response.json({ok:true});

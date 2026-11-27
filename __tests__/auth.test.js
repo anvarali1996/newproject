@@ -13,3 +13,5 @@ function signed(id=42){
 test('accepts authentic Telegram data',()=>assert.equal(verifyTelegramInitData(signed(),tok,now).id,'42'));
 test('rejects tampered id',()=>assert.throws(()=>verifyTelegramInitData(signed().replace('%22id%22%3A42','%22id%22%3A43'),tok,now)));
 test('rejects stale auth',()=>assert.throws(()=>verifyTelegramInitData(signed(),tok,now+86401)));
+test('auth failures are 401 errors',()=>assert.throws(()=>verifyTelegramInitData(signed(),'999:OTHER',now),e=>e.status===401));
+test('rejects missing init data',()=>assert.throws(()=>verifyTelegramInitData('',tok,now),e=>e.status===401));
